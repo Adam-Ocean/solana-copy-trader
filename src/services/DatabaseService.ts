@@ -56,6 +56,10 @@ export class DatabaseService extends EventEmitter {
     this.initializeDatabase();
   }
 
+  async initialize() {
+    await this.initializeDatabase();
+  }
+
   private async initializeDatabase() {
     try {
       // Create trades table
@@ -77,6 +81,15 @@ export class DatabaseService extends EventEmitter {
           closed_at TIMESTAMP,
           metadata JSONB,
           created_at TIMESTAMP DEFAULT NOW()
+        )
+      `;
+
+      // Create bot_state table
+      await this.sql`
+        CREATE TABLE IF NOT EXISTS bot_state (
+          id INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+          is_paused BOOLEAN DEFAULT FALSE,
+          updated_at TIMESTAMP DEFAULT NOW()
         )
       `;
 
@@ -355,6 +368,45 @@ export class DatabaseService extends EventEmitter {
       console.error('Error getting daily stats:', error);
       this.emit('error', error);
       return null;
+    }
+  }
+
+  async saveBotState(isPaused: boolean): Promise<void> {
+    try {
+      await this.sql`
+        INSERT INTO bot_state (id, is_paused, updated_at)
+        VALUES (1, ${isPaused}, ${new Date()})
+        ON CONFLICT (id)
+        DO UPDATE SET is_paused = ${isPaused}, updated_at = ${new Date()}
+      `;
+    } catch (error) {
+      console.error('Error saving bot state:', error);
+    }
+  }
+
+  async getBotState(): Promise<{ isPaused: boolean } | null> {
+    try {
+      const result = await this.sql`
+        SELECT is_paused FROM bot_state WHERE id = 1
+      `;
+      return result.length > 0 ? { isPaused: result[0].is_paused } : null;
+    } catch (error) {
+      console.error('Error getting bot state:', error);
+      return null;
+    }
+  }
+
+  async getRecentTrades(limit: number = 100): Promise<Trade[]> {
+    try {
+      const trades = await this.sql`
+        SELECT * FROM trades
+        ORDER BY executed_at DESC
+        LIMIT ${limit}
+      `;
+      return trades;
+    } catch (error) {
+      console.error('Error getting recent trades:', error);
+      return [];
     }
   }
 

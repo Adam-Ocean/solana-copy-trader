@@ -131,7 +131,7 @@ export interface NextBlockConfig {
 export interface WebSocketMessage {
   type: 'position_update' | 'position_opened' | 'position_closed' | 'signal' | 'market_data' | 'bot_status' | 'trade_execution' | 'error' | 'config_update' | 'stats_update' | 
         'trader_transaction' | 'chart_subscribed' | 'chart_history' | 'price_update' | 'websocket_status' |
-        'log_message' | 'bot_control_response' | 'system_status';
+        'log_message' | 'bot_control_response' | 'system_status' | 'trade_history';
   data: any;
   timestamp: number;
 }

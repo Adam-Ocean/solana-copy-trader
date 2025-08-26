@@ -16,6 +16,7 @@ export class DashboardWebSocketServer extends EventEmitter {
   private httpServer: any = null;
   private clients: Set<WebSocket> = new Set();
   private port: number;
+  private tradeHistory: any[] = [];
   
   // Birdeye WebSocket for real-time chart data
   private birdeyeWS: BirdeyeWebSocketService | null = null;
@@ -287,6 +288,15 @@ export class DashboardWebSocketServer extends EventEmitter {
       data: { positions, type: 'snapshot' },
       timestamp: Date.now()
     });
+
+    // Send trade history if available
+    if (this.tradeHistory.length > 0) {
+      this.sendMessage(ws, {
+        type: 'trade_history',
+        data: this.tradeHistory,
+        timestamp: Date.now()
+      });
+    }
 
     // Send market data
     const marketData = Array.from(this.marketData.entries()).map(([tokenAddr, data]) => ({
@@ -643,6 +653,16 @@ export class DashboardWebSocketServer extends EventEmitter {
   public updateBotStatus(status: Partial<BotStatus>): void {
     this.botStatus = { ...this.botStatus, ...status, lastUpdate: Date.now() };
     this.broadcastBotStatus();
+  }
+
+  public updateTradeHistory(trades: any[]): void {
+    this.tradeHistory = trades;
+    // Send to all connected clients
+    this.broadcast({
+      type: 'trade_history',
+      data: trades,
+      timestamp: Date.now()
+    });
   }
 
   private broadcastBotStatus(): void {

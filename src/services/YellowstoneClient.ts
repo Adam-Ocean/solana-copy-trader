@@ -157,11 +157,12 @@ export class YellowstoneClient extends EventEmitter {
           const pingRequest = {
             ping: { id: Date.now() }
           };
+          console.log('📤 Sending ping to Yellowstone...');
           this.stream.write(pingRequest);
         } else {
           clearInterval(pingInterval);
         }
-      }, 5000);
+      }, 30000); // Send ping every 30 seconds instead of 5
       
       // Note: Connection status is set in metadata handler
       console.log('✅ Yellowstone stream initialized');
@@ -182,6 +183,7 @@ export class YellowstoneClient extends EventEmitter {
       
       // Handle ping from server - respond with pong
       if (updateType === 'ping' && data.ping) {
+        console.log('🏓 Ping received from Yellowstone, sending pong...');
         if (this.stream) {
           this.stream.write({ pong: { id: data.ping.id || 1 } });
         }
@@ -190,7 +192,7 @@ export class YellowstoneClient extends EventEmitter {
       
       // Handle pong responses
       if (updateType === 'pong') {
-        // Our ping was acknowledged
+        console.log('🏓 Pong received from Yellowstone');
         return;
       }
       

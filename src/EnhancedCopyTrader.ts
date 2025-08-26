@@ -233,13 +233,15 @@ export class EnhancedCopyTrader {
       await this.closeAllPositions();
     });
 
-    this.dashboardServer.on('pause_bot', () => {
+    this.dashboardServer.on('pause_bot', async () => {
       this.isPaused = true;
+      await this.databaseService.saveBotState(true);
       console.log('⏸️ Bot paused');
     });
 
-    this.dashboardServer.on('resume_bot', () => {
+    this.dashboardServer.on('resume_bot', async () => {
       this.isPaused = false;
+      await this.databaseService.saveBotState(false);
       console.log('▶️ Bot resumed');
     });
 
@@ -793,10 +795,30 @@ export class EnhancedCopyTrader {
     this.isRunning = true;
 
     try {
+      // Initialize database first
+      console.log('Initializing database...');
+      await this.databaseService.initialize();
+      console.log('Database initialized successfully!');
+
+      // Load historical trades and positions
+      const historicalTrades = await this.databaseService.getRecentTrades(100);
+      if (historicalTrades.length > 0) {
+        console.log(`Loaded ${historicalTrades.length} historical trades`);
+        // Send to dashboard
+        this.dashboardServer.updateTradeHistory(historicalTrades);
+      }
+
       // Start dashboard server
       console.log('Starting dashboard server...');
       await this.dashboardServer.start();
       console.log('Dashboard server started successfully!');
+
+      // Check if bot should start paused (from saved state)
+      const savedState = await this.databaseService.getBotState();
+      if (savedState?.isPaused) {
+        this.isPaused = true;
+        console.log('⏸️ Bot starting in PAUSED state (from saved state)');
+      }
 
       // Connect to WebSocket
       await this.walletMonitor.connect();
