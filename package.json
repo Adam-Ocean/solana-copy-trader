@@ -6,7 +6,7 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsx src/EnhancedCopyTrader.ts",
-    "start": "node dist/EnhancedCopyTrader.js",
+    "start": "node dist/services/EnhancedCopyTrader.js",
     "paper": "PAPER_TRADING=true tsx src/EnhancedCopyTrader.ts",
     "dashboard:next": "cd dashboard-v2 && npm run dev",
     "dashboard:build": "cd dashboard-v2 && npm run build",

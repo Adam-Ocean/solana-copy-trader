@@ -105,7 +105,7 @@ export default function Home() {
   const [selectedToken, setSelectedToken] = useState<string | null>(null)
   const [chartData, setChartData] = useState<Array<{ time: number; open: number | string; high: number | string; low: number | string; close: number | string }>>([])
   const [priceFlash, setPriceFlash] = useState<Map<string, 'up' | 'down'>>(new Map())
-  const [chartTimeframe, setChartTimeframe] = useState('1s')
+  const [chartTimeframe, setChartTimeframe] = useState('1m') // Default to 1m
   const chartUpdateIntervalRef = useRef<NodeJS.Timeout | null>(null)
   const [botStatus, setBotStatus] = useState<BotStatus>({
     isRunning: false,
@@ -175,6 +175,7 @@ export default function Home() {
     | { type: 'partial_exit'; data: PartialExitData }
     | { type: 'stats_update'; data: StatsUpdateData }
     | { type: 'trader_transaction'; data: TraderTransaction }
+    | { type: 'chart_data'; data: { token: string; candles: Array<{ time: number; open: number | string; high: number | string; low: number | string; close: number | string; volume?: number }>; timeframe: string; realTime: boolean } }
     | { type: 'chart_history'; data: { token: string; candles: Array<{ time: number; open: number | string; high: number | string; low: number | string; close: number | string; volume?: number }>; realTime: boolean } }
     | { type: 'chart_subscribed'; data: { token: string; realTime: boolean; timeframe: string } }
     | { type: 'price_update'; data: { token: string; price: number; timestamp: number; o?: number; h?: number; l?: number; c?: number; v?: number } }
@@ -195,10 +196,78 @@ export default function Home() {
     selectedTokenRef.current = selectedToken
   }, [selectedToken])
   
+  // Fetch chart data directly from API instead of through WebSocket
+  const fetchChartData = async (token: string, timeframe: string) => {
+    try {
+      const response = await fetch(`/api/chart?token=${token}&type=${timeframe}`)
+      if (response.ok) {
+        const data = await response.json()
+        // Debug: log first candle to see format
+        if (Array.isArray(data) && data.length > 0) {
+          console.log('First candle from API:', data[0])
+          setChartData(data)
+          console.log(`Loaded ${data.length} candles for ${token} (${timeframe})`)
+        } else if (data.candles && data.candles.length > 0) {
+          console.log('First candle from API:', data.candles[0])
+          setChartData(data.candles)
+          console.log(`Loaded ${data.candles.length} candles for ${token} (${timeframe})`)
+        } else {
+          console.log('No candle data received')
+        }
+      } else {
+        console.error('Failed to fetch chart data:', response.statusText)
+      }
+    } catch (error) {
+      console.error('Error fetching chart data:', error)
+    }
+  }
+
+  // Add real-time chart updates for sub-minute timeframes
+  useEffect(() => {
+    if (selectedToken) {
+      // Initial fetch
+      fetchChartData(selectedToken, chartTimeframe)
+      
+      // Clear any existing interval
+      if (chartUpdateIntervalRef.current) {
+        clearInterval(chartUpdateIntervalRef.current)
+        chartUpdateIntervalRef.current = null
+      }
+      
+      // Set up real-time updates for sub-minute timeframes
+      if (['1s', '5s', '15s', '30s', '1m'].includes(chartTimeframe)) {
+        console.log(`Setting up real-time updates for ${chartTimeframe} timeframe`)
+        chartUpdateIntervalRef.current = setInterval(() => {
+          fetchChartData(selectedToken, chartTimeframe)
+        }, 1000) // Update every second for smooth real-time charts
+      } else {
+        // Update less frequently for longer timeframes
+        chartUpdateIntervalRef.current = setInterval(() => {
+          fetchChartData(selectedToken, chartTimeframe)
+        }, 10000) // Update every 10 seconds for longer timeframes
+      }
+    }
+    
+    // Cleanup on unmount or dependency change
+    return () => {
+      if (chartUpdateIntervalRef.current) {
+        clearInterval(chartUpdateIntervalRef.current)
+        chartUpdateIntervalRef.current = null
+      }
+    }
+  }, [selectedToken, chartTimeframe])
+  
   const handleWebSocketMessage = useRef((message: IncomingMessage) => {
     switch (message.type) {
       case 'bot_status':
         setBotStatus(message.data)
+        break
+      case 'chart_data':
+        console.log('Received chart_data:', message.data);
+        if (message.data?.candles && Array.isArray(message.data.candles)) {
+          setChartData(message.data.candles);
+          console.log(`Updated chart with ${message.data.candles.length} candles`);
+        }
         break
       case 'position_opened': {
         const data = message.data
@@ -729,6 +798,26 @@ export default function Home() {
                   <span className="text-sm font-medium">
                     {selectedToken ? positions.get(selectedToken)?.tokenSymbol || 'Chart' : 'Select a position'}
                   </span>
+                  <button
+                    onClick={async () => {
+                      // Use the meme token for testing
+                      const testToken = selectedToken || '8QuTUwmB5xbE7WrRfETYfaW2bNU6qFCQUVYFe8Qvpump';
+                      console.log('Testing chart for token:', testToken);
+                      // Clear existing chart data first
+                      setChartData([]);
+                      // Fetch directly from API
+                      await fetchChartData(testToken, chartTimeframe || '1m');
+                      // If no token selected, set this as selected for continuous updates
+                      if (!selectedToken) {
+                        setSelectedToken(testToken);
+                      }
+                    }}
+                    className="flex items-center gap-1 px-2 py-1 text-xs text-green-400 hover:text-green-300 bg-green-500/10 hover:bg-green-500/20 border border-green-500/30 rounded transition-all"
+                    title="Test Chart Loading"
+                  >
+                    <ExternalLink className="h-3 w-3" />
+                    Test Chart
+                  </button>
                   {selectedToken && positions.get(selectedToken) && (
                     <>
                       <span className={`text-lg font-bold transition-colors duration-300 ${
@@ -778,32 +867,8 @@ export default function Home() {
                       className={`h-6 px-1.5 text-[9px] min-w-[28px] ${chartTimeframe === tf ? 'bg-blue-500/20 text-blue-400 border-blue-500/50' : ''}`}
                       onClick={async () => {
                         setChartTimeframe(tf)
-                        if (selectedToken && ws && ws.readyState === WebSocket.OPEN) {
-                          // Clear current chart data for smooth transition
-                          setChartData([])
-                          
-                          // Unsubscribe from current timeframe
-                          ws.send(JSON.stringify({
-                            type: 'unsubscribe_chart',
-                            payload: { token: selectedToken }
-                          }))
-                          
-                          // Subscribe to new timeframe
-                          ws.send(JSON.stringify({
-                            type: 'subscribe_chart',
-                            payload: {
-                              token: selectedToken,
-                              timeframe: tf
-                            }
-                          }))
-                          
-                          console.log(`Switching to ${tf} timeframe for ${selectedToken}`)
-                          // Eagerly fetch history via REST to avoid empty chart while WS warms up
-                          requestLiveChartData(selectedToken)
-                        } else if (selectedToken) {
-                          // Fallback to REST API
-                          requestLiveChartData(selectedToken)
-                        }
+                        console.log(`Switching to ${tf} timeframe`)
+                        // The useEffect will handle fetching new data
                       }}
                     >
                       {tf.toUpperCase()}

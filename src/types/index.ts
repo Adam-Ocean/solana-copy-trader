@@ -16,15 +16,28 @@ export interface Position {
   entryPrice: number;
   entryTime: number;
   entryTx: string;
-  amount: number;
-  solInvested: number;
+  amount: number; // @deprecated Use tokenAmount
+  tokenAmount: number; // Total tokens held
+  entryAmount: number; // Initial SOL invested
+  solInvested: number; // Current SOL invested (reduced by partial exits)
   currentPrice?: number;
   pnl?: number;
   pnlPercent?: number;
-  status: 'open' | 'closed';
+  realizedPnl?: number; // P&L from partial exits
+  status: 'open' | 'partial' | 'closed';
   exitPrice?: number;
   exitTime?: number;
   exitTx?: string;
+  partialExits?: Array<{
+    percentage: number;
+    tokensSold: number;
+    solReduced: number;
+    exitPrice: number;
+    pnl: number;
+    pnlPercent: number;
+    timestamp: number;
+    txHash: string;
+  }>;
 }
 
 export interface WalletSignal {

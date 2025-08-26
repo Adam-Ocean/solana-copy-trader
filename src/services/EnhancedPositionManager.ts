@@ -19,6 +19,7 @@ export class EnhancedPositionManager extends EventEmitter {
   private useWebSocket: boolean = false;
   private telegramAlerts: TelegramAlerts;
   private lastPositionLogTime: Map<string, number> = new Map(); // Track last log time per position
+  private mode: 'paper' | 'live' = 'paper'; // Trading mode
 
   private dailyStats = {
     startTime: Date.now(),
@@ -50,6 +51,7 @@ export class EnhancedPositionManager extends EventEmitter {
   ) {
     super();
     this.config = config;
+    this.mode = config.paperTrading ? 'paper' : 'live';
     this.dailyStats.startBalance = 10;
     this.dailyStats.currentBalance = 10;
     
@@ -306,6 +308,7 @@ export class EnhancedPositionManager extends EventEmitter {
       entryPrice: signal.price * this.solPriceUSD, // Convert SOL price to USD price per token
       currentPrice: signal.price * this.solPriceUSD, // Convert SOL price to USD price per token
       entryAmount: actualSolAmount, // Total SOL invested - THIS MUST BE CORRECT (0.5+ SOL)
+      solInvested: actualSolAmount, // Current SOL invested (reduced by partial exits)
       tokenAmount: signal.amount, // Total tokens held
       initialTokenAmount: signal.amount, // Store initial amount for P&L calculations
       entryTx: txHash,
@@ -380,7 +383,7 @@ export class EnhancedPositionManager extends EventEmitter {
     let totalSolFromPartialExits = 0;
     if (position.partialExits && position.partialExits.length > 0) {
       for (const exit of position.partialExits) {
-        totalSolFromPartialExits += exit.solReceived;
+        totalSolFromPartialExits += exit.solReceived || 0;
       }
     }
 
@@ -439,8 +442,8 @@ export class EnhancedPositionManager extends EventEmitter {
 
     // No automatic exits; copy-only strategy
     
-    // Don't emit position_update for price changes
-    // Dashboard handles real-time updates via Birdeye API
+    // Emit position update so dashboard gets the new price and P&L
+    this.emit('position_update', position);
   }
 
   public async updateAllPositionPrices(): Promise<void> {
@@ -517,15 +520,20 @@ export class EnhancedPositionManager extends EventEmitter {
     await this.updateSolPrice();
     const solReceived = tokenValueUSD / this.solPriceUSD;
     
+    const solReduced = position.solInvested * (percentage / 100);
+    const pnl = solReceived - solReduced;
+    const pnlPercent = (pnl / solReduced) * 100;
+    
     const partialExit: PartialExit = {
-      id: uuidv4(),
-      amount: tokensToSell,
-      solReceived,
-      price,
-      tx: txHash,
-      timestamp: Date.now(),
       percentage,
-      reason
+      tokensSold: tokensToSell,
+      solReduced,
+      solReceived,
+      exitPrice: price,
+      pnl,
+      pnlPercent,
+      txHash,
+      timestamp: Date.now()
     };
 
     position.partialExits?.push(partialExit);
@@ -543,7 +551,7 @@ export class EnhancedPositionManager extends EventEmitter {
     let totalSolFromPartialExits = 0;
     if (position.partialExits) {
       for (const exit of position.partialExits) {
-        totalSolFromPartialExits += exit.solReceived;
+        totalSolFromPartialExits += exit.solReceived || 0;
       }
     }
 
@@ -612,7 +620,7 @@ export class EnhancedPositionManager extends EventEmitter {
     
     let totalSolReceived = remainingTokensValueSOL;
     for (const partial of position.partialExits || []) {
-      totalSolReceived += partial.solReceived;
+      totalSolReceived += partial.solReceived || 0;
     }
     
     position.exitAmount = totalSolReceived;
@@ -631,10 +639,17 @@ export class EnhancedPositionManager extends EventEmitter {
     this.dailyStats.totalPnL += position.pnl;
     this.dailyStats.currentBalance += position.pnl;
     
-    console.log(`\n📊 Position Closed:`);
-    console.log(`   Token: ${position.tokenSymbol || position.token.substring(0, 8)}`);
-    console.log(`   PnL: ${position.pnl > 0 ? '🟢' : '🔴'} ${position.pnl.toFixed(4)} SOL (${position.pnlPercent.toFixed(2)}%)`);
-    console.log(`   Duration: ${((position.exitTime - position.entryTime) / 60000).toFixed(1)} minutes`);
+    // Only show PnL for live trading, dashboard calculates it for paper trading
+    if (this.mode === 'live') {
+      console.log(`\n📊 Position Closed:`);
+      console.log(`   Token: ${position.tokenSymbol || position.token.substring(0, 8)}`);
+      console.log(`   PnL: ${position.pnl > 0 ? '🟢' : '🔴'} ${position.pnl.toFixed(4)} SOL (${position.pnlPercent.toFixed(2)}%)`);
+      console.log(`   Duration: ${((position.exitTime - position.entryTime) / 60000).toFixed(1)} minutes`);
+    } else {
+      console.log(`\n📊 Position Closed: ${position.tokenSymbol || position.token.substring(0, 8)}`);
+      console.log(`   Sold: ${position.tokenAmount.toLocaleString('en-US', { maximumFractionDigits: 2 })} tokens`);
+      console.log(`   Duration: ${((position.exitTime - position.entryTime) / 60000).toFixed(1)} minutes`);
+    }
     
     this.emit('position_closed', position);
     

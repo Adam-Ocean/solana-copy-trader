@@ -30,6 +30,8 @@ export interface Position {
   exitTime?: number;
   pnl?: number;
   pnlPercent?: number;
+  realizedPnl?: number; // P&L from partial exits
+  solInvested: number; // Current SOL invested (reduced by partial exits)
   status: 'open' | 'partial' | 'closed';
   isManual: boolean; // Track if position was manual or copy-trade
   partialExits?: PartialExit[];
@@ -38,14 +40,17 @@ export interface Position {
 }
 
 export interface PartialExit {
-  id: string;
-  amount: number; // Tokens sold
-  solReceived: number;
-  price: number;
-  tx: string;
-  timestamp: number;
+  id?: string;
   percentage: number; // % of position exited
-  reason: 'manual' | 'take_profit' | 'stop_loss' | 'copy_signal';
+  tokensSold: number; // Tokens sold
+  solReduced: number; // SOL amount reduced from position
+  solReceived?: number; // Actual SOL received (optional)
+  exitPrice: number; // Exit price per token
+  pnl: number; // P&L for this partial exit
+  pnlPercent: number; // P&L % for this partial exit
+  timestamp: number;
+  txHash: string;
+  reason?: 'manual' | 'take_profit' | 'stop_loss' | 'copy_signal';
 }
 
 export interface WalletSignal {

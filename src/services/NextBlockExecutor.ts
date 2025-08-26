@@ -3,7 +3,7 @@ import { Connection, Keypair, PublicKey, Transaction, VersionedTransaction } fro
 import bs58 from 'bs58';
 import { TradeExecution, NextBlockConfig } from '../types/enhanced';
 
-export class NextBlockExecutor {
+export class NextBlockExecutor { // Actually using Metis/QuickNode directly now
   private config: NextBlockConfig;
   private connection: Connection;
   private wallet: Keypair | null = null;
@@ -148,6 +148,7 @@ export class NextBlockExecutor {
     amount: number,
     slippageBps: number
   ): Promise<any> {
+    let url = '';
     try {
       const params = new URLSearchParams({
         inputMint,
@@ -156,13 +157,14 @@ export class NextBlockExecutor {
         slippageBps: slippageBps.toString(),
         onlyDirectRoutes: 'false',
         maxAccounts: '64',
-        useQNMarketCache: 'true',
         asLegacyTransaction: 'false'
       });
 
       // Remove trailing slash from metisUrl if it exists
       const baseUrl = this.metisUrl.endsWith('/') ? this.metisUrl.slice(0, -1) : this.metisUrl;
-      const url = `${baseUrl}/quote?${params}`;
+      url = `${baseUrl}/quote?${params}`;
+      
+      console.log(`🔍 Fetching quote from: ${url.substring(0, 100)}...`);
       
       const response = await axios.get(url, {
         timeout: 5000 // Increased timeout for complex routing calculations
@@ -173,15 +175,19 @@ export class NextBlockExecutor {
       // Handle specific error cases
       if (error.response?.data?.errorCode === 'TOKEN_NOT_TRADABLE') {
         console.warn(`⚠️ Token not tradable: ${outputMint}`);
+        console.log('Full error response:', JSON.stringify(error.response?.data, null, 2));
         return null;
       }
       
       if (error.response?.status === 400) {
-        console.error('Metis API error:', error.response?.data?.error || 'Bad request');
+        console.error('Quote API error:', error.response?.data?.error || 'Bad request');
+        console.log('Full error response:', JSON.stringify(error.response?.data, null, 2));
         return null;
       }
       
-      console.error('Error getting quote from Metis:', error.message);
+      console.error('Error getting quote:', error.message);
+      console.log('Request URL was:', url);
+      console.log('Error details:', error.response?.status, error.response?.statusText);
       return null;
     }
   }
@@ -208,7 +214,7 @@ export class NextBlockExecutor {
         };
       }
 
-      console.log(`🚀 Executing ${execution.side} via NextBlock...`);
+      console.log(`🚀 Executing ${execution.side} via Metis/QuickNode...`);
 
       // Get swap transaction from Metis/Jupiter
       const swapResponse = await this.getSwapTransaction(quote, execution);
@@ -220,27 +226,27 @@ export class NextBlockExecutor {
         };
       }
 
-      // Get dynamic tip based on current floor
-      const tipAmount = await this.getTipFloor();
+      // Submit directly to QuickNode RPC (not NextBlock)
+      console.log(`📡 Submitting to QuickNode RPC with priority fee...`);
       
-      // If anti-MEV is disabled, use higher priority fee as recommended
-      const minFee = execution.antiMEV ? 0.001 : 0.005; // 0.005 SOL for non-MEV trades
+      // Deserialize, sign, and send the transaction
+      const txBuffer = Buffer.from(swapResponse.swapTransaction, 'base64');
+      const transaction = VersionedTransaction.deserialize(txBuffer);
       
-      const priorityFee = Math.max(
-        tipAmount,
-        this.config.priorityFee,
-        minFee
-      );
+      // Sign the transaction
+      transaction.sign([this.wallet!]);
       
-      console.log(`💰 Priority fee: ${priorityFee} SOL (Anti-MEV: ${execution.antiMEV})`);
+      // Submit directly to RPC
+      const signature = await this.connection.sendTransaction(transaction, {
+        skipPreflight: true,
+        maxRetries: 2,
+        preflightCommitment: 'processed'
+      });
       
-
-      // Submit to NextBlock
-      const submitResponse = await this.submitToNextBlock(
-        swapResponse.swapTransaction,
-        priorityFee,
-        execution.antiMEV
-      );
+      const submitResponse = {
+        success: true,
+        signature
+      };
 
       if (submitResponse.success && submitResponse.signature) {
         console.log(`✅ Transaction submitted: ${submitResponse.signature}`);
@@ -255,7 +261,7 @@ export class NextBlockExecutor {
       } else {
         return {
           success: false,
-          error: submitResponse.error || 'Failed to submit transaction'
+          error: 'Failed to submit transaction'
         };
       }
 
@@ -270,17 +276,27 @@ export class NextBlockExecutor {
 
   private async getSwapTransaction(quote: any, execution: TradeExecution): Promise<any> {
     try {
-      // Build swap request
+      // Check if this is a Pump.fun token (Simple AMM)
+      const routeLabel = quote.routePlan?.[0]?.swapInfo?.label || '';
+      const isPumpFun = routeLabel.toLowerCase().includes('pump.fun');
+      
+      // Build swap request with dynamic slippage for meme tokens
       const swapRequest = {
         userPublicKey: this.wallet!.publicKey.toString(),
         quoteResponse: quote,
         wrapAndUnwrapSol: true,
-        useSharedAccounts: true,
-        computeUnitPriceMicroLamports: 'auto',
+        useSharedAccounts: !isPumpFun, // Must be false for Pump.fun tokens
         asLegacyTransaction: false,
         useTokenLedger: false,
         dynamicComputeUnitLimit: true,
-        skipUserAccountsRpcCalls: false
+        skipUserAccountsRpcCalls: false,
+        // Use dynamic slippage for meme tokens
+        dynamicSlippage: {
+          minBps: 100,   // Min 1% (Jupiter will optimize)
+          maxBps: 3000   // Max 30% for extreme volatility
+        },
+        // Use prioritizationFeeLamports for auto-calculated priority fee
+        prioritizationFeeLamports: 'auto' // Auto-calculate priority fee up to 0.005 SOL
       };
 
       // Remove trailing slash from metisUrl if it exists
@@ -297,8 +313,14 @@ export class NextBlockExecutor {
         }
       );
       return response.data;
-    } catch (error) {
-      console.error('Error getting swap transaction:', error);
+    } catch (error: any) {
+      console.error('Error getting swap transaction:');
+      if (error.response) {
+        console.error('  Status:', error.response.status);
+        console.error('  Error:', JSON.stringify(error.response.data, null, 2));
+      } else {
+        console.error('  Message:', error.message);
+      }
       return null;
     }
   }

@@ -3,7 +3,7 @@
     "/_not-found/page": [
       "static/chunks/b30bf291f1520de0.js",
       "static/chunks/0e01da165e82043f.js",
-      "static/chunks/e50e2093addeb6c7.css",
+      "static/chunks/e0602628cdeb5337.css",
       "static/chunks/5886f073b26ada04.js",
       "static/chunks/00cbab173f2d4572.js",
       "static/chunks/a005c38f79ad3e7d.js",
@@ -17,7 +17,7 @@
     "/dashboard/page": [
       "static/chunks/b30bf291f1520de0.js",
       "static/chunks/0e01da165e82043f.js",
-      "static/chunks/e50e2093addeb6c7.css",
+      "static/chunks/e0602628cdeb5337.css",
       "static/chunks/5886f073b26ada04.js",
       "static/chunks/00cbab173f2d4572.js",
       "static/chunks/a005c38f79ad3e7d.js",
@@ -32,7 +32,7 @@
     "/handler/[...stack]/page": [
       "static/chunks/b30bf291f1520de0.js",
       "static/chunks/0e01da165e82043f.js",
-      "static/chunks/e50e2093addeb6c7.css",
+      "static/chunks/e0602628cdeb5337.css",
       "static/chunks/5886f073b26ada04.js",
       "static/chunks/00cbab173f2d4572.js",
       "static/chunks/a005c38f79ad3e7d.js",
@@ -49,7 +49,7 @@
     "/login/page": [
       "static/chunks/b30bf291f1520de0.js",
       "static/chunks/0e01da165e82043f.js",
-      "static/chunks/e50e2093addeb6c7.css",
+      "static/chunks/e0602628cdeb5337.css",
       "static/chunks/5886f073b26ada04.js",
       "static/chunks/00cbab173f2d4572.js",
       "static/chunks/a005c38f79ad3e7d.js",
@@ -65,14 +65,14 @@
     "/page": [
       "static/chunks/b30bf291f1520de0.js",
       "static/chunks/0e01da165e82043f.js",
-      "static/chunks/e50e2093addeb6c7.css",
+      "static/chunks/e0602628cdeb5337.css",
       "static/chunks/5886f073b26ada04.js",
       "static/chunks/00cbab173f2d4572.js",
       "static/chunks/a005c38f79ad3e7d.js",
-      "static/chunks/25b24217eaac086d.js",
+      "static/chunks/d706a832b068f444.js",
       "static/chunks/e07c21c28cde3159.js",
       "static/chunks/703df0c8afd8dfc1.js",
-      "static/chunks/7416f4860251abb1.js",
+      "static/chunks/81106c7e7596c148.js",
       "static/chunks/a3dc544e47d3bb67.js",
       "static/chunks/91adb7bdb9870c6a.js",
       "static/chunks/7f7144a17b3c7258.js",

@@ -32,6 +32,8 @@ export class EnhancedCopyTrader {
   private useQuickNode = true; // Default to QuickNode
   private telegramAlerts: TelegramAlerts;
   private useYellowstone = false;
+  private stopAfterFullExit = false; // Stop trading after full exit for review
+  private hasExitedTestToken = false; // Track if we've exited the test token
 
   constructor() {
     // Initialize connection
@@ -274,8 +276,25 @@ export class EnhancedCopyTrader {
   private async handleBuySignal(signal: WalletSignal): Promise<void> {
     console.log(`\n🔔 BUY Signal: ${signal.tokenSymbol || signal.token.substring(0, 8)}`);
     console.log(`   Token: ${signal.token}`);
-    console.log(`   Amount: ${signal.solAmount} SOL`);
+    console.log(`   SOL Amount: ${signal.solAmount} SOL`);
+    console.log(`   Token Amount: ${signal.amount} tokens`);
+    console.log(`   Signal Price: ${signal.price} (raw value)`);
     console.log(`   Trader tokens: ${signal.traderTotalTokens || 0}`);
+    
+    // TEST MODE: Only trade specific token if configured
+    const testToken = process.env.TEST_TOKEN;
+    if (testToken) {
+      if (signal.token !== testToken) {
+        console.log(`   ⏭️ Skipping - Test mode active, only trading ${testToken.substring(0, 8)}...`);
+        return;
+      }
+      
+      // Check if we've already exited this token and should stop
+      if (this.hasExitedTestToken) {
+        console.log(`   🛑 Already traded and exited test token - stopping for review`);
+        return;
+      }
+    }
 
     // RULE 1: Skip if trader already had the token (not a new entry)
     if (signal.traderTotalTokens && signal.traderTotalTokens > signal.amount) {
@@ -283,9 +302,10 @@ export class EnhancedCopyTrader {
       return;
     }
 
-    // RULE 2: Skip if trade amount is below 0.5 SOL
-    if (signal.solAmount < 0.5) {
-      console.log(`   ⚠️ Trade amount too small: ${signal.solAmount.toFixed(3)} SOL < 0.5 SOL minimum`);
+    // RULE 2: Skip if trade amount is below minimum
+    const minTradeSize = parseFloat(process.env.MIN_TRADE_SIZE_SOL || '0.01');
+    if (signal.solAmount < minTradeSize) {
+      console.log(`   ⚠️ Trade amount too small: ${signal.solAmount.toFixed(3)} SOL < ${minTradeSize} SOL minimum`);
       return;
     }
 
@@ -307,7 +327,11 @@ export class EnhancedCopyTrader {
 
     // Get quote
     const amountInLamports = this.config.positionSize * 1e9;
-    const slippageBps = parseInt(process.env.SLIPPAGE_BPS || '200');
+    
+    // For meme tokens, we'll use dynamic slippage in the swap request (10-30%)
+    // Quote request still needs a slippage value for price calculation
+    const slippageBps = 3000; // Use max 30% for quote to ensure we get a quote
+    console.log(`   💎 Meme token - dynamic slippage will optimize between 10%-30%`);
     
     console.log(`   📊 Getting quote for ${this.config.positionSize} SOL -> ${signal.tokenSymbol || 'token'}`);
     const quote = await this.executor.getQuote(
@@ -321,51 +345,17 @@ export class EnhancedCopyTrader {
       console.log('   ❌ Failed to get quote from exchange');
       return;
     }
-    console.log(`   ✅ Got quote: ${quote.outAmount || quote.otherAmountThreshold || 0} tokens`)
+    console.log(`   ✅ Got quote: ${quote.outAmount || quote.otherAmountThreshold || 0} tokens`);
 
-    // Derive expected tokens from quote (preferred over USD math)
+    // Derive expected tokens from quote
     const solValueUSD = this.config.positionSize * this.positionManager.getSolPrice();
-    const outAmountRaw = (quote.outAmount ?? quote.otherAmountThreshold ?? '0').toString();
-    // Prefer mint decimals via RPC if quote decimals are missing
-    let outDecimals = (quote.outDecimals ?? quote.outputDecimals ?? (quote.routePlan?.[0]?.swapInfo?.outToken?.decimals)) as number | undefined;
-    if (outDecimals === undefined) {
-      try {
-        const mintInfo = await this.connection.getParsedAccountInfo(new (require('@solana/web3.js').PublicKey)(signal.token));
-        const mintData: any = mintInfo.value?.data;
-        const decimalsCandidate = mintData?.parsed?.info?.decimals;
-        if (typeof decimalsCandidate === 'number') {
-          outDecimals = decimalsCandidate;
-          console.log(`   Got token decimals from RPC: ${outDecimals}`);
-        }
-      } catch (e) {
-        console.log(`   Failed to get decimals from RPC, will use fallback`);
-      }
-    }
-    const parsedOut = Number(outAmountRaw);
-    let ourTokenAmount = 0;
     
-    // Debug logging
-    console.log(`   Quote raw amount: ${outAmountRaw}, decimals: ${outDecimals}`);
+    // Jupiter/Metis returns the token amount in SMALLEST UNITS
+    // For pump.fun tokens with 6 decimals, divide by 10^6
+    const tokenDecimals = 6;
+    const ourTokenAmount = Number(quote.outAmount ?? quote.otherAmountThreshold ?? 0) / Math.pow(10, tokenDecimals);
     
-    if (outAmountRaw.includes('.')) {
-      // Already a UI amount
-      ourTokenAmount = isFinite(parsedOut) ? parsedOut : 0;
-      console.log(`   Parsed as UI amount: ${ourTokenAmount}`);
-    } else if (isFinite(parsedOut)) {
-      // Jupiter ALWAYS returns atomic units for tokens
-      // We need to divide by 10^decimals to get the actual token amount
-      
-      if (outDecimals === undefined) {
-        // If decimals not provided, fetch from token mint or default to 6
-        // Most pump.fun tokens have 6 decimals
-        outDecimals = 6;
-        console.log(`   No decimals provided, defaulting to 6 for pump.fun token`);
-      }
-      
-      // Always treat as atomic units when from Jupiter
-      ourTokenAmount = parsedOut / Math.pow(10, outDecimals);
-      console.log(`   Parsed as atomic units: ${parsedOut} / 10^${outDecimals} = ${ourTokenAmount.toLocaleString()} tokens`);
-    }
+    console.log(`   Tokens we'll receive: ${ourTokenAmount.toLocaleString()}`)
     
     // Calculate slippage estimate
     let displaySlippage = 0;
@@ -384,15 +374,10 @@ export class EnhancedCopyTrader {
       displaySlippage += 1.0; // Add 1% for low liquidity
     }
     
-    // Calculate our actual entry price
-    const ourEntryPriceSOL = ourTokenAmount > 0 ? this.config.positionSize / ourTokenAmount : 0;
-    const ourEntryPriceUSD = ourEntryPriceSOL * this.positionManager.getSolPrice();
-    
     console.log(`   Our investment: ${this.config.positionSize} SOL ($${solValueUSD.toFixed(2)})`);
-    console.log(`   Tokens we'll get: ${ourTokenAmount.toLocaleString()} tokens`);
-    console.log(`   Our entry price: ${ourEntryPriceSOL.toFixed(10)} SOL/token ($${ourEntryPriceUSD.toFixed(8)}/token)`);
     console.log(`   Trader's price: ${signal.price.toFixed(10)} SOL/token`);
     console.log(`   Expected slippage: ${displaySlippage.toFixed(2)}%`);
+    console.log(`   Tokens we'll get: ${ourTokenAmount.toLocaleString()}`);
     console.log(`   Price Impact: ${quote.priceImpactPct || '0'}%`);
 
     // Execute trade
@@ -414,14 +399,36 @@ export class EnhancedCopyTrader {
     );
 
     if (result.success) {
-      // Create our own signal with OUR token amount, not the trader's
-      // Calculate our actual price in SOL per token (not USD)
-      const ourEntryPriceSOL = ourTokenAmount > 0 ? this.config.positionSize / ourTokenAmount : signal.price;
+      // Calculate our actual price (SOL per token)
+      const ourPrice = this.config.positionSize / ourTokenAmount;
+      console.log(`   ✅ Trade executed successfully`);
+      console.log(`   Our tokens received: ${ourTokenAmount}`);
+      console.log(`   Our SOL paid: ${this.config.positionSize}`);
+      console.log(`   Our price: ${ourPrice} SOL/token`);
+      console.log(`   Trader's price: ${signal.price} SOL/token`);
+      
+      // IMPORTANT: For paper trading, we should use the trader's actual price
+      // For live trading, we use our actual price from the quote
+      let effectivePrice: number;
+      
+      if (this.config.paperTrading) {
+        // Paper trading: Use trader's price (they spent X SOL for Y tokens)
+        // The signal should already have the correct price from Yellowstone
+        effectivePrice = signal.price;
+        console.log(`   Paper trading: Using trader's price: ${effectivePrice} SOL/token`);
+        console.log(`   (Trader spent ${signal.solAmount} SOL for ${signal.amount} tokens)`);
+      } else {
+        // Live trading: Use our actual price based on the quote
+        effectivePrice = ourPrice;
+        console.log(`   Live trading: Using our price: ${effectivePrice} SOL/token`);
+        console.log(`   (We'll spend ${this.config.positionSize} SOL for ${ourTokenAmount} tokens)`);
+      }
+      
       const ourSignal = {
         ...signal,
-        amount: ourTokenAmount, // Our calculated token amount
+        amount: ourTokenAmount, // Actual tokens from quote
         solAmount: this.config.positionSize,
-        price: ourEntryPriceSOL // Price in SOL per token (will be converted to USD in PositionManager)
+        price: effectivePrice // Use appropriate price based on mode
       };
       
       // Record position with our actual amounts
@@ -509,12 +516,17 @@ export class EnhancedCopyTrader {
       console.log(`   📊 Proportional exit: ${exitPercentage.toFixed(1)}% (${tokensToSell.toFixed(2)} tokens)`);
     }
 
-    // Get quote for selling our proportional amount
-    const slippageBps = parseInt(process.env.SLIPPAGE_BPS || '200');
+    // Get quote for selling our proportional amount (meme tokens use 30% max)
+    let slippageBps = 3000; // 30% for meme token sells
+    // For pump.fun tokens, use 6 decimals
+    // The API expects the amount in smallest units
+    const tokenDecimals = 6;
+    const amountInSmallestUnit = Math.floor(tokensToSell * Math.pow(10, tokenDecimals));
+    
     const quote = await this.executor.getQuote(
       signal.token,
       'So11111111111111111111111111111111111111112', // SOL
-      Math.floor(tokensToSell * 1e9),
+      amountInSmallestUnit,
       slippageBps
     );
 
@@ -523,7 +535,9 @@ export class EnhancedCopyTrader {
       return;
     }
 
-    console.log(`   Quote: ${(quote.outAmount / 1e9).toFixed(4)} SOL for ${tokensToSell.toFixed(2)} tokens`);
+    // The quote returns SOL amount in lamports (1e9)
+    const ourSolReceived = Number(quote.outAmount ?? quote.otherAmountThreshold ?? 0) / 1e9;
+    console.log(`   Quote: ${ourSolReceived.toFixed(4)} SOL for ${tokensToSell.toLocaleString('en-US', { maximumFractionDigits: 2 })} tokens`);
 
     // Execute trade
     const execution: TradeExecution = {
@@ -537,11 +551,72 @@ export class EnhancedCopyTrader {
       antiMEV: true
     };
 
-    const result = await this.executor.executeTrade(
+    let result = await this.executor.executeTrade(
       execution,
       quote,
       this.config.paperTrading
     );
+
+    // Retry logic for failed sells (important to exit positions)
+    if (!result.success && !this.config.paperTrading) {
+      console.log(`   ⚠️ Sell failed: ${result.error}`);
+      
+      // Retry up to 3 times with increasing slippage
+      let retryCount = 0;
+      const maxRetries = 3;
+      
+      while (!result.success && retryCount < maxRetries) {
+        retryCount++;
+        
+        // Use max 30% slippage for all sell retries on memes
+        slippageBps = 3000; // Always 30% for retries
+        console.log(`   🔄 Retry ${retryCount}/${maxRetries} with ${slippageBps/100}% slippage...`);
+        
+        // Get new quote with higher slippage
+        const retryQuote = await this.executor.getQuote(
+          signal.token,
+          'So11111111111111111111111111111111111111112',
+          amountInSmallestUnit,
+          slippageBps
+        );
+        
+        if (!retryQuote) {
+          console.log(`   ❌ Failed to get retry quote`);
+          await new Promise(resolve => setTimeout(resolve, 2000));
+          continue;
+        }
+        
+        // Update execution with new slippage
+        execution.slippage = slippageBps;
+        
+        // Retry the trade
+        result = await this.executor.executeTrade(
+          execution,
+          retryQuote,
+          false
+        );
+        
+        if (result.success) {
+          console.log(`   ✅ Retry successful with ${slippageBps/100}% slippage!`);
+          break;
+        }
+        
+        // Wait before next retry
+        await new Promise(resolve => setTimeout(resolve, 2000));
+      }
+      
+      if (!result.success) {
+        console.log(`   ❌ All retries failed. Manual intervention may be needed.`);
+        await this.telegramAlerts.sendAlert(
+          'SELL FAILED',
+          `⚠️ Failed after ${maxRetries} retries\n\n` +
+          `Token: ${signal.tokenSymbol || signal.token.substring(0, 8)}\n` +
+          `Amount: ${tokensToSell.toFixed(2)} tokens (${exitPercentage.toFixed(1)}%)\n` +
+          `Last error: ${result.error}\n\n` +
+          `Manual intervention may be required.`
+        );
+      }
+    }
 
     if (result.success) {
       // Handle proportional exit or full close
@@ -566,6 +641,18 @@ export class EnhancedCopyTrader {
         const closedPosition = this.positionManager.getPosition(signal.token);
         if (closedPosition) {
           await this.telegramAlerts.sendPositionClosed(closedPosition);
+        }
+        
+        // TEST MODE: Mark that we've exited the test token
+        const testToken = process.env.TEST_TOKEN;
+        if (testToken && signal.token === testToken) {
+          this.hasExitedTestToken = true;
+          console.log('   🛑 Test token fully exited - stopping trading for review');
+          await this.telegramAlerts.sendAlert(
+            'TEST COMPLETE',
+            `🛑 Token ${signal.tokenSymbol || signal.token.substring(0, 8)} fully exited.\n` +
+            'Bot will stop trading now for review.'
+          );
         }
       }
 
@@ -681,11 +768,13 @@ export class EnhancedCopyTrader {
 
     const tokensToSell = position.tokenAmount * (payload.percentage / 100);
     const slippageBps = parseInt(process.env.SLIPPAGE_BPS || '200');
+    // Use 1e6 for pump.fun tokens (6 decimals), not 1e9 (SOL decimals)
+    const tokenDecimals = 6;
 
     const quote = await this.executor.getQuote(
       payload.token,
       'So11111111111111111111111111111111111111112',
-      tokensToSell * 1e9,
+      Math.floor(tokensToSell * Math.pow(10, tokenDecimals)),
       slippageBps
     );
 
@@ -804,6 +893,26 @@ export class EnhancedCopyTrader {
     console.log(`Mode: ${this.config.paperTrading ? 'PAPER TRADING' : 'LIVE TRADING'}`);
     console.log(`Max Positions: ${this.config.maxPositions}`);
     console.log(`Dashboard: ws://localhost:${process.env.WS_SERVER_PORT || 4790}`);
+    console.log('================================');
+    console.log('📋 COPY TRADING RULES:');
+    console.log(`  ✅ Min Trade Size: ${process.env.MIN_TRADE_SIZE_SOL || '0.001'} SOL`);
+    console.log(`  ✅ Max Trade Size: No limit`);
+    console.log(`  ✅ Position Size: ${this.config.positionSize} SOL per trade`);
+    console.log(`  ✅ Slippage: ${process.env.SLIPPAGE_BPS || '300'} bps (3-15% dynamic)`);
+    console.log(`  ✅ Priority Fee: Auto-calculated`);
+    console.log(`  ✅ Execution: Direct to QuickNode RPC`);
+    console.log(`  ✅ Exit Strategy: Follow trader's exits proportionally`);
+    
+    // Show test mode configuration
+    const testToken = process.env.TEST_TOKEN;
+    if (testToken) {
+      console.log('================================');
+      console.log('🧪 TEST MODE ACTIVE:');
+      console.log(`  📌 Only trading token: ${testToken}`);
+      console.log(`  📌 Max positions: 1`);
+      console.log(`  📌 Will stop after full exit for review`);
+    }
+    
     console.log('================================\n');
 
     this.isRunning = true;

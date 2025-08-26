@@ -91,8 +91,12 @@ export class YellowstoneClient extends EventEmitter {
       
       console.log(`📡 Subscribing to Yellowstone for wallet: ${this.config.targetWallet}`);
       
-      // Create bidirectional stream for Subscribe RPC
-      this.stream = this.client.subscribe();
+      // Create bidirectional stream for Subscribe RPC with authentication token
+      const metadata = new grpc.Metadata();
+      const token = process.env.YELLOWSTONE_TOKEN || 'ecfb45c9c4c335fa4b18b26dc53dcbd0aaae144b07df75c0fb29d90ebe1e1237';
+      metadata.add('x-token', token);
+      
+      this.stream = this.client.subscribe(metadata);
       console.log('🟡 Stream created, setting up handlers...');
       
       // Handle stream events - SIMPLIFIED to not break stream

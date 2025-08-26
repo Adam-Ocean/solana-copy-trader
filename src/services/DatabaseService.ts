@@ -118,6 +118,22 @@ export class DatabaseService extends EventEmitter {
         )
       `;
 
+      // Create trader_transactions table for tracking trader's actual transactions
+      await this.sql`
+        CREATE TABLE IF NOT EXISTS trader_transactions (
+          id SERIAL PRIMARY KEY,
+          trader_wallet VARCHAR(44) NOT NULL,
+          type VARCHAR(10) NOT NULL,
+          token_address VARCHAR(44) NOT NULL,
+          token_symbol VARCHAR(20),
+          amount DECIMAL(20, 10) NOT NULL,
+          price DECIMAL(20, 10),
+          tx_hash VARCHAR(88) NOT NULL UNIQUE,
+          timestamp TIMESTAMP NOT NULL DEFAULT NOW(),
+          created_at TIMESTAMP DEFAULT NOW()
+        )
+      `;
+
       // Create indexes
       await this.sql`
         CREATE INDEX IF NOT EXISTS idx_trades_wallet ON trades(wallet_address);

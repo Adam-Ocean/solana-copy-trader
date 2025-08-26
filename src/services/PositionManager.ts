@@ -26,8 +26,10 @@ export class PositionManager {
       entryPrice: signal.price,
       entryTime: signal.timestamp,
       entryTx: txHash,
-      amount: signal.amount,
-      solInvested,
+      amount: signal.amount, // Keep for backwards compatibility
+      tokenAmount: signal.amount, // Total tokens held
+      entryAmount: solInvested, // Initial SOL invested
+      solInvested, // Current SOL invested
       status: 'open',
       pnl: 0,
       pnlPercent: 0
@@ -44,6 +46,56 @@ export class PositionManager {
     return position;
   }
 
+  proportionalExit(token: string, traderSoldTokens: number, traderTotalTokens: number, exitPrice: number, exitTx: string): Position | null {
+    const position = this.positions.get(token);
+    if (!position) return null;
+
+    // Calculate what percentage the trader sold
+    const exitPercentage = (traderSoldTokens / traderTotalTokens);
+    const tokensToSell = position.tokenAmount * exitPercentage;
+    const solToReduce = position.solInvested * exitPercentage;
+
+    console.log(`   📊 Proportional exit: ${(exitPercentage * 100).toFixed(1)}%`);
+    console.log(`   Trader sold: ${traderSoldTokens.toLocaleString()} / ${traderTotalTokens.toLocaleString()} tokens`);
+    console.log(`   We're selling: ${tokensToSell.toLocaleString()} / ${position.tokenAmount.toLocaleString()} tokens`);
+
+    // Calculate P&L for the sold portion
+    const priceChange = (exitPrice - position.entryPrice) / position.entryPrice;
+    const exitValue = solToReduce * (1 + priceChange);
+    const partialPnl = exitValue - solToReduce;
+    const partialPnlPercent = (partialPnl / solToReduce) * 100;
+
+    // Update position - reduce holdings
+    position.tokenAmount -= tokensToSell;
+    position.solInvested -= solToReduce;
+    
+    // Track partial exit
+    if (!position.partialExits) {
+      position.partialExits = [];
+    }
+    position.partialExits.push({
+      percentage: exitPercentage * 100,
+      tokensSold: tokensToSell,
+      solReduced: solToReduce,
+      exitPrice,
+      pnl: partialPnl,
+      pnlPercent: partialPnlPercent,
+      timestamp: Date.now(),
+      txHash: exitTx
+    });
+
+    // Update cumulative P&L
+    position.realizedPnl = (position.realizedPnl || 0) + partialPnl;
+
+    // Update daily P&L
+    this.dailyPnL += partialPnl;
+
+    console.log(`   ✅ Partial exit executed: ${partialPnl > 0 ? '+' : ''}${partialPnl.toFixed(4)} SOL (${partialPnlPercent.toFixed(1)}%)`);
+    console.log(`   Remaining position: ${position.tokenAmount.toLocaleString()} tokens (${position.solInvested.toFixed(4)} SOL)`);
+
+    return position;
+  }
+
   closePosition(token: string, exitPrice: number, exitTx: string): Position | null {
     const position = this.positions.get(token);
     if (!position) return null;
@@ -54,13 +106,17 @@ export class PositionManager {
     const pnl = exitValue - position.solInvested;
     const pnlPercent = (pnl / position.solInvested) * 100;
 
+    // Add any realized P&L from partial exits
+    const totalPnl = pnl + (position.realizedPnl || 0);
+    const totalPnlPercent = (totalPnl / position.entryAmount) * 100;
+
     // Update position
     position.status = 'closed';
     position.exitPrice = exitPrice;
     position.exitTime = Date.now() / 1000;
     position.exitTx = exitTx;
-    position.pnl = pnl;
-    position.pnlPercent = pnlPercent;
+    position.pnl = totalPnl;
+    position.pnlPercent = totalPnlPercent;
 
     // Move to closed positions
     this.positions.delete(token);

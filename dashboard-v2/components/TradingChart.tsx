@@ -155,13 +155,24 @@ export default function TradingChart({ data = [], entryPrice, avgExitPrice, curr
       try {
         // Format data for TradingView - filter out invalid entries
         const formattedData: CandlestickData[] = data
-          .filter((candle: { time: number; open: number | string; high: number | string; low: number | string; close: number | string }) => {
+          .filter((candle: { time: number; open: number | string; high: number | string; low: number | string; close: number | string }, index: number) => {
             // Validate candle has required fields and valid timestamp
             const t = candle && typeof candle.time === 'number' ? candle.time : NaN
             const o = parseFloat(String(candle.open))
             const h = parseFloat(String(candle.high))
             const l = parseFloat(String(candle.low))
             const c = parseFloat(String(candle.close))
+            
+            // Debug first candle that fails
+            if (index === 0) {
+              console.log('First candle validation:', {
+                candle,
+                t, o, h, l, c,
+                isValidTime: Number.isFinite(t) && t > 0 && t < 1e12,
+                isValidOHLC: Number.isFinite(o) && Number.isFinite(h) && Number.isFinite(l) && Number.isFinite(c)
+              })
+            }
+            
             return (
               Number.isFinite(t) && t > 0 && t < 1e12 &&
               Number.isFinite(o) && Number.isFinite(h) && Number.isFinite(l) && Number.isFinite(c)
@@ -219,7 +230,7 @@ export default function TradingChart({ data = [], entryPrice, avgExitPrice, curr
           if (firstVisibleCandle && lastCandle) {
             // Add some padding to the right for incoming candles
             const timeRange = (lastCandle.time as number) - (firstVisibleCandle.time as number)
-            const padding = timeRange * 0.1 // 10% padding
+            const padding = timeRange * 0.25 // 25% padding for more space on right
             
             // Use setTimeout to ensure chart is fully rendered before setting range
             setTimeout(() => {

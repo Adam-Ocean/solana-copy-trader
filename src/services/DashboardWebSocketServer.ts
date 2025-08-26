@@ -21,7 +21,7 @@ export class DashboardWebSocketServer extends EventEmitter {
   
   // Birdeye WebSocket for real-time chart data
   private birdeyeWS: BirdeyeWebSocketService | null = null;
-  private chartSubscriptions: Map<string, Set<WebSocket>> = new Map(); // token -> clients interested
+  // Chart subscriptions removed - dashboard fetches its own data
   // Store price history per token AND timeframe
   private priceHistory: Map<string, any[]> = new Map(); // key: token:timeframe
   private readonly MAX_HISTORY_SIZE = 1000; // Keep last 1000 price points per token
@@ -166,67 +166,7 @@ export class DashboardWebSocketServer extends EventEmitter {
       });
     }
 
-    // Add to price history for chart
-    if (!this.priceHistory.has(token)) {
-      this.priceHistory.set(token, []);
-    }
-    
-    const history = this.priceHistory.get(token)!;
-    const chartPoint = {
-      time: unixTime || Math.floor(timestamp / 1000), // Convert to seconds for chart
-      open: o || price,
-      high: h || price,
-      low: l || price,
-      close: c || price,
-      volume: v || 0
-    };
-    
-    // Check if we should update the last candle or create a new one
-    if (history.length > 0) {
-      const lastCandle = history[history.length - 1];
-      // If within the same second, update the candle
-      if (lastCandle.time === chartPoint.time) {
-        lastCandle.high = Math.max(lastCandle.high, chartPoint.close);
-        lastCandle.low = Math.min(lastCandle.low, chartPoint.close);
-        lastCandle.close = chartPoint.close;
-        lastCandle.volume = chartPoint.volume;
-      } else {
-        // New candle
-        history.push(chartPoint);
-        // Trim history if too large
-        if (history.length > this.MAX_HISTORY_SIZE) {
-          history.shift();
-        }
-      }
-    } else {
-      history.push(chartPoint);
-    }
-
-    // Broadcast to clients subscribed to this token's chart
-    const subscribers = this.chartSubscriptions.get(token);
-    if (subscribers && subscribers.size > 0) {
-      const chartUpdate = {
-        type: 'price_update' as const,
-        data: {
-          token,
-          price,
-          timestamp: chartPoint.time * 1000, // Convert back to milliseconds
-          o: chartPoint.open,
-          h: chartPoint.high,
-          l: chartPoint.low,
-          c: chartPoint.close,
-          v: chartPoint.volume
-        },
-        timestamp: Date.now()
-      };
-      
-      // Send to subscribed clients only
-      for (const client of subscribers) {
-        if (client.readyState === WebSocket.OPEN) {
-          client.send(JSON.stringify(chartUpdate));
-        }
-      }
-    }
+    // Chart functionality removed - dashboard fetches its own data
 
     // Also broadcast general price update for positions
     this.broadcast({
@@ -262,10 +202,7 @@ export class DashboardWebSocketServer extends EventEmitter {
       console.log('📱 Dashboard client disconnected');
       this.clients.delete(ws);
       
-      // Remove from all chart subscriptions
-      for (const subscribers of this.chartSubscriptions.values()) {
-        subscribers.delete(ws);
-      }
+      // Chart subscriptions removed - dashboard fetches its own data
     });
 
     ws.on('error', (error) => {
@@ -363,13 +300,13 @@ export class DashboardWebSocketServer extends EventEmitter {
       case 'subscribe_chart':
         this.handleChartSubscription(command.payload, ws);
         break;
-        
+      
       case 'unsubscribe_chart':
-        this.handleChartUnsubscription(command.payload, ws);
+        // No-op for now since we fetch on demand
         break;
-        
+      
       case 'get_chart_history':
-        this.sendChartHistory(command.payload, ws);
+        this.fetchAndSendChartData(command.payload, ws);
         break;
 
       case 'buy':
@@ -444,76 +381,10 @@ export class DashboardWebSocketServer extends EventEmitter {
     }
   }
 
-  /**
-   * Handle chart subscription request
-   */
-  private async handleChartSubscription(payload: { token: string; timeframe?: string }, ws: WebSocket): Promise<void> {
-    const { token, timeframe = '1s' } = payload;
-    
-    console.log(`📊 Chart subscription request: ${token} (${timeframe})`);
-    
-    // Use timeframe-specific key for price history
-    const historyKey = `${token}:${timeframe}`;
-    
-    // Add client to subscribers for this token
-    if (!this.chartSubscriptions.has(token)) {
-      this.chartSubscriptions.set(token, new Set());
-    }
-    
-    // Subscribe to Birdeye WebSocket for this token with new timeframe
-    if (this.birdeyeWS) {
-      try {
-        // Don't unsubscribe - just resubscribe with new timeframe
-        // Birdeye will handle updating the subscription
-        await this.birdeyeWS.subscribeToPrices([token], timeframe);
-        console.log(`✅ Subscribed to real-time prices: ${token} (${timeframe})`);
-      } catch (error) {
-        console.error(`Failed to subscribe to ${token}:`, error);
-      }
-    }
-    
-    this.chartSubscriptions.get(token)!.add(ws);
-    
-    // Always load chart history for the requested timeframe
-    await this.loadChartHistory(token, timeframe);
-    
-    // Send the loaded history with timeframe
-    this.sendChartHistory({ token, timeframe }, ws);
-    
-    // Confirm subscription
-    this.sendMessage(ws, {
-      type: 'chart_subscribed',
-      data: { token, realTime: !!this.birdeyeWS, timeframe },
-      timestamp: Date.now()
-    });
-  }
+  // Chart subscription/unsubscription methods removed - dashboard fetches its own data
 
-  /**
-   * Handle chart unsubscription request
-   */
-  private async handleChartUnsubscription(payload: { token: string }, ws: WebSocket): Promise<void> {
-    const { token } = payload;
-    
-    const subscribers = this.chartSubscriptions.get(token);
-    if (subscribers) {
-      subscribers.delete(ws);
-      
-      // If no more subscribers, remove from local tracking
-      if (subscribers.size === 0) {
-        this.chartSubscriptions.delete(token);
-        
-        // Note: We don't unsubscribe from Birdeye here because
-        // UNSUBSCRIBE_PRICE unsubscribes from ALL tokens, not just one
-        // This would break other subscriptions
-        console.log(`📉 Removed local chart subscription: ${token}`);
-      }
-    }
-  }
-
-  /**
-   * Load historical chart data from Birdeye REST API
-   */
-  private async loadChartHistory(token: string, timeframe: string): Promise<void> {
+  // Chart history loading removed - dashboard fetches its own data
+  /* Dead code removed
     try {
       const apiKey = this.wsConfig?.apiKey || process.env.BIRDEYE_API_KEY;
       if (!apiKey) return;
@@ -590,11 +461,12 @@ export class DashboardWebSocketServer extends EventEmitter {
       
       if (response.ok) {
         const data: any = await response.json();
-        console.log(`📊 Birdeye API response for ${token}: ${data?.data?.items?.length || 0} items`);
+        // Disabled: Dashboard handles its own chart data
+        // console.log(`📊 Birdeye API response for ${token}: ${data?.data?.items?.length || 0} items`);
         if (data?.data?.items && Array.isArray(data.data.items)) {
           // Log first item to debug timestamp format
           if (data.data.items.length > 0) {
-            console.log(`📊 First candle raw data:`, data.data.items[0]);
+            // console.log(`📊 First candle raw data:`, data.data.items[0]);
           }
           
           const candles = data.data.items.map((item: any) => {
@@ -621,9 +493,9 @@ export class DashboardWebSocketServer extends EventEmitter {
           candles.sort((a: any, b: any) => a.time - b.time);
 
           // Store with timeframe-specific key
-          const historyKey = `${token}:${timeframe}`;
-          this.priceHistory.set(historyKey, candles);
-          console.log(`📊 Loaded ${candles.length} historical candles for ${token} (${timeframe} -> ${birdeyeType})`);
+          // Price history removed - dashboard fetches its own data
+          // Disabled: Dashboard should fetch its own chart data
+          // console.log(`📊 Loaded ${candles.length} historical candles for ${token} (${timeframe} -> ${birdeyeType})`);
         } else {
           console.log(`📊 No chart data in response for ${token}`);
         }
@@ -634,30 +506,9 @@ export class DashboardWebSocketServer extends EventEmitter {
     } catch (error) {
       console.error('Error loading chart history:', error);
     }
-  }
+    */
 
-  /**
-   * Send chart history to client
-   */
-  private sendChartHistory(payload: { token: string; timeframe?: string }, ws: WebSocket): void {
-    const { token, timeframe = '1s' } = payload;
-    const historyKey = `${token}:${timeframe}`;
-    const history = this.priceHistory.get(historyKey) || [];
-    
-    if (history.length === 0) {
-      console.log(`⚠️ No chart history available for ${token}, will wait for real-time data`);
-    }
-    
-    this.sendMessage(ws, {
-      type: 'chart_history',
-      data: {
-        token,
-        candles: history,
-        realTime: !!this.birdeyeWS
-      },
-      timestamp: Date.now()
-    });
-  }
+  // Chart history sending removed - dashboard fetches its own data
 
   private sendMessage(ws: WebSocket, message: WebSocketMessage): void {
     if (ws.readyState === WebSocket.OPEN) {
@@ -697,6 +548,203 @@ export class DashboardWebSocketServer extends EventEmitter {
       data: trades,
       timestamp: Date.now()
     });
+  }
+
+  private async handleChartSubscription(payload: { token: string, timeframe?: string }, ws: WebSocket): Promise<void> {
+    const { token, timeframe = '1m' } = payload;
+    
+    console.log(`📊 Chart subscription request: ${token} (${timeframe})`);
+    
+    // Send initial chart data
+    await this.fetchAndSendChartData({ token, timeframe }, ws);
+    
+    // Confirm subscription
+    this.sendMessage(ws, {
+      type: 'chart_subscribed' as any,
+      data: { token, timeframe },
+      timestamp: Date.now()
+    });
+  }
+
+  private async fetchAndSendChartData(payload: { token: string, timeframe?: string }, ws: WebSocket): Promise<void> {
+    const { token, timeframe = '1m' } = payload; // Default to 1m
+    
+    try {
+      console.log(`📊 Fetching chart data for ${token} (${timeframe})`);
+      
+      // Fetch from Birdeye API
+      const apiKey = this.wsConfig?.apiKey || process.env.BIRDEYE_API_KEY;
+      if (!apiKey) {
+        console.error('No Birdeye API key configured');
+        // Send empty data
+        this.sendMessage(ws, {
+          type: 'chart_data' as any,
+          data: {
+            token,
+            timeframe,
+            candles: [],
+            realTime: false
+          },
+          timestamp: Date.now()
+        });
+        return;
+      }
+
+      // First, get the pair address for this token (vs SOL)
+      const solAddress = 'So11111111111111111111111111111111111111112';
+      let pairAddress: string | null = null;
+      
+      try {
+        // Get token overview to find main pool
+        const overviewUrl = `https://public-api.birdeye.so/defi/token_overview?address=${token}`;
+        const overviewResponse = await fetch(overviewUrl, {
+          headers: {
+            'X-API-KEY': apiKey,
+            'x-chain': 'solana'
+          }
+        });
+        
+        if (overviewResponse.ok) {
+          const overview: any = await overviewResponse.json();
+          // Use the most liquid pool (usually the first one)
+          const pools = overview?.data?.liquidity_pools || [];
+          const solPool = pools.find((p: any) => 
+            p.quote_mint === solAddress || p.base_mint === solAddress
+          );
+          if (solPool) {
+            pairAddress = solPool.address;
+            console.log(`📊 Found pair address: ${pairAddress}`);
+          }
+        }
+      } catch (e) {
+        console.log('Could not find pair address, using token API instead');
+      }
+
+      // Calculate time range based on timeframe
+      const now = Math.floor(Date.now() / 1000);
+      let fromTime = now - 3600; // Default 1 hour
+      
+      // Map timeframe to seconds for range calculation
+      const timeframeSeconds: { [key: string]: number } = {
+        '1s': 3600,     // 1 hour of 1s candles
+        '5s': 7200,     // 2 hours
+        '15s': 10800,   // 3 hours
+        '30s': 14400,   // 4 hours
+        '1m': 86400,    // 24 hours
+        '5m': 172800,   // 2 days
+        '15m': 259200,  // 3 days
+        '30m': 604800,  // 7 days
+        '1h': 1209600,  // 14 days
+        '2h': 2419200,  // 28 days
+        '4h': 2419200,  // 28 days
+        '6h': 2419200,  // 28 days
+        '8h': 2419200,  // 28 days
+        '12h': 2419200, // 28 days
+        '1d': 7776000,  // 90 days
+        '3d': 7776000,  // 90 days
+        '1w': 31536000  // 1 year
+      };
+      
+      fromTime = now - (timeframeSeconds[timeframe.toLowerCase()] || 3600);
+      
+      // Map timeframes to Birdeye API types
+      const typeMap: { [key: string]: string } = {
+        '1s': '1m',  // Birdeye doesn't support 1s, use 1m
+        '5s': '1m',  // Birdeye doesn't support 5s, use 1m
+        '15s': '1m', // Birdeye doesn't support 15s, use 1m
+        '30s': '1m', // Birdeye doesn't support 30s, use 1m
+        '1m': '1m',
+        '5m': '5m',
+        '15m': '15m',
+        '30m': '30m',
+        '1h': '1H',
+        '2h': '2H',
+        '4h': '4H',
+        '6h': '6H',
+        '8h': '8H',
+        '12h': '12H',
+        '1d': '1D',
+        '3d': '3D',
+        '1w': '1W'
+      };
+      const birdeyeType = typeMap[timeframe.toLowerCase()] || '1m';
+
+      // Use pair API if we have a pair address, otherwise fall back to token API
+      let url: string;
+      if (pairAddress) {
+        // Use v3 pair API for better data (supports 1s, 15s, 30s intervals)
+        url = `https://public-api.birdeye.so/defi/v3/ohlcv/pair?address=${pairAddress}&type=${birdeyeType}&time_from=${fromTime}&time_to=${now}&count_limit=5000`;
+        console.log(`📊 Fetching from Birdeye Pair API: ${birdeyeType} candles`);
+      } else {
+        // Fallback to token API
+        url = `https://public-api.birdeye.so/defi/v3/ohlcv?address=${token}&type=${birdeyeType}&time_from=${fromTime}&time_to=${now}`;
+        console.log(`📊 Fetching from Birdeye Token API: ${birdeyeType} candles`);
+      }
+      
+      const response = await fetch(url, { 
+        headers: { 
+          'X-API-KEY': apiKey,
+          'x-chain': 'solana',
+          'Accept': 'application/json'
+        } 
+      });
+      
+      let chartData: any[] = [];
+      
+      if (response.ok) {
+        const data: any = await response.json();
+        if (data?.data?.items && Array.isArray(data.data.items)) {
+          chartData = data.data.items.map((item: any) => {
+            // Birdeye v3 API uses unix_time in seconds
+            let t = item.unix_time || item.unixTime || item.time || item.timestamp || 0;
+            
+            // Only convert if clearly in milliseconds (13+ digits)
+            if (typeof t === 'number' && t > 1e10) {
+              t = Math.floor(t / 1000);
+            }
+            
+            return {
+              time: t,
+              open: item.o || item.open || 0,
+              high: item.h || item.high || 0,
+              low: item.l || item.low || 0,
+              close: item.c || item.close || 0,
+              volume: item.v || item.volume || 0
+            };
+          });
+          
+          console.log(`📊 Fetched ${chartData.length} candles from Birdeye`);
+        } else {
+          console.log('📊 No chart data in Birdeye response');
+        }
+      } else {
+        console.error(`📊 Birdeye API error: ${response.status} ${response.statusText}`);
+      }
+      
+      // Send to client
+      this.sendMessage(ws, {
+        type: 'chart_data' as any,
+        data: {
+          token,
+          timeframe,
+          candles: chartData,
+          realTime: false
+        },
+        timestamp: Date.now()
+      });
+      
+      console.log(`📊 Sent ${chartData.length} candles to client`);
+    } catch (error) {
+      console.error('Error fetching chart data:', error);
+      this.sendMessage(ws, {
+        type: 'error',
+        data: {
+          message: 'Failed to fetch chart data',
+          token
+        },
+        timestamp: Date.now()
+      });
+    }
   }
 
   private broadcastBotStatus(): void {

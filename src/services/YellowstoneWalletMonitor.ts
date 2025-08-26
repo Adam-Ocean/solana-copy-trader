@@ -10,6 +10,7 @@ export class YellowstoneWalletMonitor extends EventEmitter {
   private processedSignatures = new Set<string>();
   private signalCount = 0;
   private startTime = Date.now();
+  private traderPositions = new Map<string, number>(); // Track trader's token holdings
 
   constructor(grpcUrl: string, targetWallet: string, connection: Connection) {
     super();
@@ -38,16 +39,19 @@ export class YellowstoneWalletMonitor extends EventEmitter {
         const signalRate = this.signalCount / runtime;
         
         console.log(`🟡 [Yellowstone] Signal #${this.signalCount} (Rate: ${signalRate.toFixed(1)}/min)`);
+        console.log(`   DEBUG: Signal type: ${signal.type}, has signature: ${!!signal.signature}`);
         
         if (signal.type === 'transaction' && signal.signature) {
           // Check if we've already processed this
           if (this.processedSignatures.has(signal.signature)) {
+            console.log('   DEBUG: Already processed signature, skipping');
             return;
           }
           
           this.processedSignatures.add(signal.signature);
           
           // Parse transaction for trade details
+          console.log('   DEBUG: Calling parseTransaction...');
           await this.parseTransaction(signal);
         }
         
@@ -74,6 +78,39 @@ export class YellowstoneWalletMonitor extends EventEmitter {
 
   async connect(): Promise<void> {
     await this.client.connect();
+    
+    // Initialize trader's current token positions
+    await this.initializeTraderPositions();
+  }
+  
+  private async initializeTraderPositions(): Promise<void> {
+    try {
+      console.log('🔄 Loading trader\'s current token positions...');
+      
+      // Get all token accounts for the trader
+      const tokenAccounts = await this.connection.getParsedTokenAccountsByOwner(
+        new PublicKey(this.targetWallet),
+        { programId: new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA') }
+      );
+      
+      let positionCount = 0;
+      for (const account of tokenAccounts.value) {
+        const tokenData = account.account.data.parsed.info;
+        const mint = tokenData.mint;
+        const amount = parseFloat(tokenData.tokenAmount.uiAmount || '0');
+        
+        if (amount > 0) {
+          this.traderPositions.set(mint, amount);
+          positionCount++;
+          console.log(`   Found position: ${amount.toFixed(2)} tokens of ${mint.substring(0, 8)}...`);
+        }
+      }
+      
+      console.log(`✅ Loaded ${positionCount} existing token positions for trader`);
+    } catch (error) {
+      console.error('Failed to load trader positions:', error);
+      console.log('⚠️ Starting with empty position tracking (will build up as trades happen)');
+    }
   }
 
   private async parseTransaction(signal: any): Promise<void> {
@@ -100,6 +137,37 @@ export class YellowstoneWalletMonitor extends EventEmitter {
         const swapInfo = await this.parseYellowstoneTransaction(txData);
         
         if (swapInfo) {
+          // Debug logging for price calculation
+          console.log(`   DEBUG swapInfo:`, {
+            side: swapInfo.side,
+            tokenAmount: swapInfo.tokenAmount,
+            solAmount: swapInfo.amount,
+            price: swapInfo.price,
+            priceCalculation: swapInfo.tokenAmount ? `${swapInfo.amount}/${swapInfo.tokenAmount} = ${swapInfo.amount/swapInfo.tokenAmount}` : 'N/A'
+          });
+          
+          // Update trader's position tracking
+          let traderTotalBefore = this.traderPositions.get(swapInfo.token) || 0;
+          let traderSoldTokens = 0;
+          
+          if (swapInfo.side === 'buy') {
+            // Trader is buying - update their position
+            this.traderPositions.set(swapInfo.token, traderTotalBefore + (swapInfo.tokenAmount || 0));
+          } else if (swapInfo.side === 'sell' && swapInfo.tokenAmount) {
+            // Trader is selling - calculate how much they sold
+            traderSoldTokens = swapInfo.tokenAmount;
+            const remaining = Math.max(0, traderTotalBefore - traderSoldTokens);
+            
+            if (remaining === 0) {
+              this.traderPositions.delete(swapInfo.token);
+              console.log(`   Trader fully exited position (sold all ${traderTotalBefore.toFixed(2)} tokens)`);
+            } else {
+              this.traderPositions.set(swapInfo.token, remaining);
+              const sellPercent = (traderSoldTokens / traderTotalBefore) * 100;
+              console.log(`   Trader partial exit: sold ${traderSoldTokens.toFixed(2)}/${traderTotalBefore.toFixed(2)} (${sellPercent.toFixed(1)}%)`);
+            }
+          }
+          
           const walletSignal: WalletSignal = {
             action: swapInfo.side,
             wallet: this.targetWallet,
@@ -108,13 +176,16 @@ export class YellowstoneWalletMonitor extends EventEmitter {
             solAmount: swapInfo.amount, // SOL amount spent/received
             price: swapInfo.price || 0,
             timestamp: Math.floor(Date.now() / 1000),
-            signature: signatureStr
+            signature: signatureStr,
+            // Add trader position info for proportional exits
+            traderTotalTokens: swapInfo.side === 'sell' ? traderTotalBefore : undefined,
+            traderSoldTokens: swapInfo.side === 'sell' ? traderSoldTokens : undefined
           };
           
           console.log(`🟡 [Yellowstone] ${swapInfo.side.toUpperCase()} Signal:`, {
             dex: swapInfo.dex,
             token: swapInfo.token.substring(0, 10) + '...',
-            tokenAmount: swapInfo.tokenAmount ? swapInfo.tokenAmount.toFixed(2) : 'N/A',
+            tokenAmount: swapInfo.tokenAmount ? swapInfo.tokenAmount.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 6 }) : 'N/A',
             solAmount: `${swapInfo.amount.toFixed(6)} SOL`,
             price: `${(swapInfo.price || 0).toFixed(10)} SOL/token`,
             slot: signal.slot,
@@ -411,17 +482,23 @@ export class YellowstoneWalletMonitor extends EventEmitter {
       }
       
       // Calculate price: SOL amount / token amount
-      if (tokenAmount > 0 && Math.abs(targetWalletChange) > 0.0001) {
+      // IMPORTANT: Use 'amount' (actual SOL traded), not targetWalletChange (which includes fees)
+      if (tokenAmount > 0 && amount > 0) {
+        // Price = SOL traded / tokens traded
+        price = amount / tokenAmount;
+        console.log(`   Calculated price: ${price.toFixed(10)} SOL per token (${tokenAmount} tokens)`);
+      } else if (tokenAmount > 0 && Math.abs(targetWalletChange) > 0.0001) {
+        // Fallback to target wallet change if amount is not available
+        console.log(`   WARNING: Using targetWalletChange for price calculation (less accurate)`);
         if (side === 'buy') {
           // BUY: price = SOL spent / tokens received
           price = Math.abs(targetWalletChange) / tokenAmount;
         } else if (side === 'sell') {
           // SELL: price = SOL received / tokens sold
-          // For sells, target wallet change might be small due to fees, use maxSolChange as backup
           const solReceived = targetWalletChange > 0 ? targetWalletChange : Math.abs(maxSolChange);
           price = solReceived / tokenAmount;
         }
-        console.log(`   Calculated price: ${price.toFixed(10)} SOL per token (${tokenAmount} tokens)`);
+        console.log(`   Calculated price (fallback): ${price.toFixed(10)} SOL per token`);
       } else {
         // Fallback: use the original amount-based calculation
         if (side === 'buy' && targetWalletChange < 0) {
