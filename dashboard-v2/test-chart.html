@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test Chart</title>
+    <script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
+</head>
+<body>
+    <div id="chart" style="width: 800px; height: 400px;"></div>
+    <script>
+        const chart = LightweightCharts.createChart(document.getElementById('chart'), {
+            width: 800,
+            height: 400,
+            layout: {
+                backgroundColor: '#1a1c24',
+                textColor: '#d1d4dc',
+            },
+            grid: {
+                vertLines: { color: 'rgba(255, 255, 255, 0.1)' },
+                horzLines: { color: 'rgba(255, 255, 255, 0.1)' },
+            },
+        });
+
+        const candlestickSeries = chart.addCandlestickSeries({
+            upColor: '#26a69a',
+            downColor: '#ef5350',
+            borderVisible: false,
+            wickUpColor: '#26a69a',
+            wickDownColor: '#ef5350',
+        });
+
+        // Test data
+        const data = [
+            { time: 1755984180, open: 0.001210, high: 0.001215, low: 0.001205, close: 0.001212 },
+            { time: 1755984240, open: 0.001212, high: 0.001218, low: 0.001210, close: 0.001215 },
+            { time: 1755984300, open: 0.001215, high: 0.001220, low: 0.001213, close: 0.001218 },
+            { time: 1755984360, open: 0.001218, high: 0.001222, low: 0.001216, close: 0.001220 },
+            { time: 1755984420, open: 0.001220, high: 0.001225, low: 0.001218, close: 0.001223 },
+        ];
+
+        candlestickSeries.setData(data);
+        chart.timeScale().fitContent();
+
+        console.log('Test chart created with data:', data);
+    </script>
+</body>
+</html>

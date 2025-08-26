@@ -1,1 +1,13 @@
-{}
+{
+  "/_not-found/page": "app/_not-found/page.js",
+  "/api/chart/route": "app/api/chart/route.js",
+  "/api/pools/route": "app/api/pools/route.js",
+  "/api/positions/route": "app/api/positions/route.js",
+  "/api/stats/route": "app/api/stats/route.js",
+  "/api/trades/route": "app/api/trades/route.js",
+  "/dashboard/page": "app/dashboard/page.js",
+  "/favicon.ico/route": "app/favicon.ico/route.js",
+  "/handler/[...stack]/page": "app/handler/[...stack]/page.js",
+  "/login/page": "app/login/page.js",
+  "/page": "app/page.js"
+}
