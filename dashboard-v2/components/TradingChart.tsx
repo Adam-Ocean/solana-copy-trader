@@ -20,6 +20,8 @@ export default function TradingChart({ data = [], entryPrice, avgExitPrice, curr
   const entryLineRef = useRef<PriceLineHandle | null>(null)
   const exitLineRef = useRef<PriceLineHandle | null>(null)
   const [isChartReady, setIsChartReady] = useState(false)
+  const hasUserInteractedRef = useRef(false)
+  const isInitialLoadRef = useRef(true)
 
   // Initialize chart once
   useEffect(() => {
@@ -51,14 +53,14 @@ export default function TradingChart({ data = [], entryPrice, avgExitPrice, curr
             borderColor: 'rgba(255, 255, 255, 0.1)',
             timeVisible: true,
             secondsVisible: true,  // Show seconds for 1s candles
-            rightOffset: 50,  // More space on the right for incoming candles
+            rightOffset: 12,  // Add 40px worth of candles padding on the right
             barSpacing: 10,   // Better spacing to prevent squishing
             minBarSpacing: 2,  // Minimum spacing between bars
             fixLeftEdge: false,  // Allow scrolling left
             fixRightEdge: false,  // Allow scrolling right
             lockVisibleTimeRangeOnResize: true,
-            rightBarStaysOnScroll: true,
-            shiftVisibleRangeOnNewBar: true
+            rightBarStaysOnScroll: false,  // Don't auto-scroll when new data comes
+            shiftVisibleRangeOnNewBar: false  // Don't shift view when new bar appears
           },
           handleScroll: {
             mouseWheel: true,
@@ -103,6 +105,22 @@ export default function TradingChart({ data = [], entryPrice, avgExitPrice, curr
 
         chartRef.current = chart
         seriesRef.current = candleSeries
+        
+        // Track user interactions with the chart
+        chart.timeScale().subscribeVisibleLogicalRangeChange(() => {
+          // If this change wasn't triggered by our code, it means the user interacted
+          if (!isInitialLoadRef.current) {
+            hasUserInteractedRef.current = true
+          }
+        })
+        
+        // Reset interaction flag when clicking on chart
+        chart.subscribeCrosshairMove(() => {
+          // User is interacting with the chart
+          if (!isInitialLoadRef.current) {
+            hasUserInteractedRef.current = true
+          }
+        })
         
         // Handle resize
         const handleResize = () => {
@@ -208,39 +226,45 @@ export default function TradingChart({ data = [], entryPrice, avgExitPrice, curr
         if (uniqueData.length > 0) {
           seriesRef.current.setData(uniqueData)
           
-          // Set visible range based on data length
-          // Show fewer candles initially to prevent them from appearing too large
-          let visibleCandles = 50 // Default to show 50 candles
-          
-          // Adjust based on data length
-          if (uniqueData.length < 20) {
-            visibleCandles = uniqueData.length
-          } else if (uniqueData.length < 50) {
-            visibleCandles = 30
-          } else if (uniqueData.length < 100) {
-            visibleCandles = 50
-          } else {
-            visibleCandles = 80
-          }
-          
-          const lastCandle = uniqueData[uniqueData.length - 1]
-          const firstVisibleIndex = Math.max(0, uniqueData.length - visibleCandles)
-          const firstVisibleCandle = uniqueData[firstVisibleIndex]
-          
-          if (firstVisibleCandle && lastCandle) {
-            // Add some padding to the right for incoming candles
-            const timeRange = (lastCandle.time as number) - (firstVisibleCandle.time as number)
-            const padding = timeRange * 0.25 // 25% padding for more space on right
+          // Only auto-adjust visible range if user hasn't interacted with the chart
+          // or if this is the initial load
+          if (!hasUserInteractedRef.current || isInitialLoadRef.current) {
+            // Set visible range based on data length
+            // Show fewer candles initially to prevent them from appearing too large
+            let visibleCandles = 50 // Default to show 50 candles
             
-            // Use setTimeout to ensure chart is fully rendered before setting range
-            setTimeout(() => {
-              if (chartRef.current) {
-                chartRef.current.timeScale().setVisibleRange({
-                  from: firstVisibleCandle.time as Time,
-                  to: ((lastCandle.time as number) + padding) as Time
-                })
-              }
-            }, 100)
+            // Adjust based on data length
+            if (uniqueData.length < 20) {
+              visibleCandles = uniqueData.length
+            } else if (uniqueData.length < 50) {
+              visibleCandles = 30
+            } else if (uniqueData.length < 100) {
+              visibleCandles = 50
+            } else {
+              visibleCandles = 80
+            }
+            
+            const lastCandle = uniqueData[uniqueData.length - 1]
+            const firstVisibleIndex = Math.max(0, uniqueData.length - visibleCandles)
+            const firstVisibleCandle = uniqueData[firstVisibleIndex]
+            
+            if (firstVisibleCandle && lastCandle) {
+              // Add more padding to the right for incoming candles
+              const timeRange = (lastCandle.time as number) - (firstVisibleCandle.time as number)
+              const padding = timeRange * 0.4 // 40% padding for more space on right (increased from 25%)
+              
+              // Use setTimeout to ensure chart is fully rendered before setting range
+              setTimeout(() => {
+                if (chartRef.current && (!hasUserInteractedRef.current || isInitialLoadRef.current)) {
+                  chartRef.current.timeScale().setVisibleRange({
+                    from: firstVisibleCandle.time as Time,
+                    to: ((lastCandle.time as number) + padding) as Time
+                  })
+                  // Mark initial load as complete
+                  isInitialLoadRef.current = false
+                }
+              }, 100)
+            }
           }
         } else {
           console.warn('No valid candles to display after filtering')

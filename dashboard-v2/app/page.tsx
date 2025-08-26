@@ -13,6 +13,7 @@ import { Slider } from '@/components/ui/slider'
 import { Badge } from '@/components/ui/badge'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Separator } from '@/components/ui/separator'
+import { BirdeyeWebSocket, CandleAggregator } from '@/lib/birdeye-websocket'
 import { 
   Settings,
   X,
@@ -107,6 +108,11 @@ export default function Home() {
   const [priceFlash, setPriceFlash] = useState<Map<string, 'up' | 'down'>>(new Map())
   const [chartTimeframe, setChartTimeframe] = useState('1m') // Default to 1m
   const chartUpdateIntervalRef = useRef<NodeJS.Timeout | null>(null)
+  
+  // Birdeye WebSocket state
+  const birdeyeWsRef = useRef<BirdeyeWebSocket | null>(null)
+  const candleAggregatorRef = useRef<CandleAggregator | null>(null)
+  const [realtimePrice, setRealtimePrice] = useState<number | null>(null)
   const [botStatus, setBotStatus] = useState<BotStatus>({
     isRunning: false,
     isPaused: false,
@@ -196,17 +202,128 @@ export default function Home() {
     selectedTokenRef.current = selectedToken
   }, [selectedToken])
   
-  // Fetch chart data directly from API instead of through WebSocket
+  // Initialize Birdeye WebSocket connection
+  const initBirdeyeWebSocket = useCallback(async () => {
+    try {
+      // Fetch WebSocket credentials from server (keeps API key secure)
+      const response = await fetch('/api/ws-proxy')
+      if (!response.ok) {
+        console.warn('Failed to get WebSocket credentials')
+        return
+      }
+      
+      const { token } = await response.json()
+      const apiKey = JSON.parse(Buffer.from(token, 'base64').toString()).apiKey
+      
+      if (!birdeyeWsRef.current) {
+        birdeyeWsRef.current = new BirdeyeWebSocket(apiKey)
+      }
+
+      await birdeyeWsRef.current.connect((token, price, timestamp) => {
+        // Handle price updates from Birdeye WebSocket
+        console.log(`🔴 WEBSOCKET UPDATE - Token: ${token}, Price: ${price}, Time: ${timestamp}`)
+        
+        if (token === selectedTokenRef.current) {
+          console.log('🔴 WEBSOCKET: Updating chart for matching token')
+          setRealtimePrice(price)
+          
+          // Update candle aggregator
+          if (candleAggregatorRef.current) {
+            const result = candleAggregatorRef.current.updatePrice(price, timestamp)
+            if (result) {
+              console.log(`🔴 WEBSOCKET Candle: ${result.isNew ? 'NEW' : 'UPDATE'} candle at ${result.candle.time}`)
+              setChartData(prevData => {
+                if (!prevData || prevData.length === 0) return prevData
+                
+                const newData = [...prevData]
+                const lastHistoricalCandle = newData[newData.length - 1]
+                const lastHistoricalTime = typeof lastHistoricalCandle.time === 'number' 
+                  ? lastHistoricalCandle.time 
+                  : parseInt(String(lastHistoricalCandle.time))
+                
+                if (result.isNew) {
+                  // Only add new candle if it's after the last historical candle
+                  if (result.candle.time > lastHistoricalTime) {
+                    newData.push(result.candle)
+                    console.log('🔴 WEBSOCKET: Added new candle to chart')
+                  }
+                } else {
+                  // Check if we should update the last candle or create a new one
+                  if (result.candle.time === lastHistoricalTime) {
+                    // Update the last historical candle with real-time data
+                    newData[newData.length - 1] = {
+                      ...lastHistoricalCandle,
+                      high: Math.max(
+                        parseFloat(String(lastHistoricalCandle.high)), 
+                        result.candle.high
+                      ),
+                      low: Math.min(
+                        parseFloat(String(lastHistoricalCandle.low)), 
+                        result.candle.low
+                      ),
+                      close: result.candle.close
+                    }
+                    console.log('🔴 WEBSOCKET: Updated last candle in chart')
+                  } else if (result.candle.time > lastHistoricalTime) {
+                    // This is a new candle period, add it
+                    newData.push(result.candle)
+                    console.log('🔴 WEBSOCKET: Added new candle after gap')
+                  }
+                }
+                return newData
+              })
+            }
+          } else {
+            console.warn('🔴 WEBSOCKET: No candle aggregator initialized')
+          }
+        } else {
+          console.log(`🔴 WEBSOCKET Token mismatch: received ${token}, expecting ${selectedTokenRef.current}`)
+        }
+      })
+      console.log('Birdeye WebSocket connected')
+    } catch (error) {
+      console.error('Failed to connect Birdeye WebSocket:', error)
+    }
+  }, [])
+
+  // Fetch chart data directly from API and setup WebSocket
   const fetchChartData = async (token: string, timeframe: string) => {
     try {
+      console.log('📊 FETCHING FROM REST API...')
       const response = await fetch(`/api/chart?token=${token}&type=${timeframe}`)
       if (response.ok) {
         const data = await response.json()
         // Debug: log first candle to see format
         if (Array.isArray(data) && data.length > 0) {
-          console.log('First candle from API:', data[0])
+          console.log('📊 REST API UPDATE: First candle from API:', data[0])
           setChartData(data)
-          console.log(`Loaded ${data.length} candles for ${token} (${timeframe})`)
+          console.log(`📊 REST API: Loaded ${data.length} candles for ${token} (${timeframe})`)
+          
+          // Setup Birdeye WebSocket for real-time updates
+          if (birdeyeWsRef.current?.isConnected()) {
+            // Unsubscribe from previous token if any
+            if (selectedTokenRef.current && selectedTokenRef.current !== token) {
+              birdeyeWsRef.current.unsubscribeFromToken(selectedTokenRef.current)
+            }
+            // Set chart type and subscribe to new token
+            birdeyeWsRef.current.setChartType(timeframe)
+            birdeyeWsRef.current.subscribeToToken(token, timeframe)
+            
+            // Initialize candle aggregator with current timeframe
+            candleAggregatorRef.current = new CandleAggregator(timeframe)
+            
+            // Seed the aggregator with the last candle from historical data
+            if (data.length > 0) {
+              const lastCandle = data[data.length - 1]
+              const lastTime = typeof lastCandle.time === 'number' ? lastCandle.time : parseInt(String(lastCandle.time))
+              const lastClose = parseFloat(String(lastCandle.close))
+              
+              // Pre-populate the aggregator so it continues from the last historical candle
+              candleAggregatorRef.current.updatePrice(lastClose, lastTime)
+            }
+            
+            console.log(`Subscribed to Birdeye WebSocket for ${token} with timeframe ${timeframe}`)
+          }
         } else if (data.candles && data.candles.length > 0) {
           console.log('First candle from API:', data.candles[0])
           setChartData(data.candles)
@@ -222,7 +339,7 @@ export default function Home() {
     }
   }
 
-  // Add real-time chart updates for sub-minute timeframes
+  // Add real-time chart updates
   useEffect(() => {
     if (selectedToken) {
       // Initial fetch
@@ -234,17 +351,29 @@ export default function Home() {
         chartUpdateIntervalRef.current = null
       }
       
-      // Set up real-time updates for sub-minute timeframes
-      if (['1s', '5s', '15s', '30s', '1m'].includes(chartTimeframe)) {
-        console.log(`Setting up real-time updates for ${chartTimeframe} timeframe`)
-        chartUpdateIntervalRef.current = setInterval(() => {
-          fetchChartData(selectedToken, chartTimeframe)
-        }, 1000) // Update every second for smooth real-time charts
-      } else {
-        // Update less frequently for longer timeframes
-        chartUpdateIntervalRef.current = setInterval(() => {
-          fetchChartData(selectedToken, chartTimeframe)
-        }, 10000) // Update every 10 seconds for longer timeframes
+      // Only poll if WebSocket is not connected
+      // WebSocket will handle real-time updates when connected
+      if (!birdeyeWsRef.current?.isConnected()) {
+        // Set up polling as fallback
+        if (['1s', '15s', '30s', '1m'].includes(chartTimeframe)) {
+          console.log(`⏱️ Setting up POLLING updates for ${chartTimeframe} timeframe (WebSocket not connected)`)
+          chartUpdateIntervalRef.current = setInterval(() => {
+            // Only poll if WebSocket is still not connected
+            if (!birdeyeWsRef.current?.isConnected()) {
+              console.log('⏱️ POLLING: WebSocket not connected, fetching via REST API')
+              fetchChartData(selectedToken, chartTimeframe)
+            } else {
+              console.log('✅ WebSocket is connected, skipping polling')
+            }
+          }, 5000) // Poll every 5 seconds as fallback
+        } else {
+          // Update less frequently for longer timeframes
+          chartUpdateIntervalRef.current = setInterval(() => {
+            if (!birdeyeWsRef.current?.isConnected()) {
+              fetchChartData(selectedToken, chartTimeframe)
+            }
+          }, 30000) // Update every 30 seconds for longer timeframes
+        }
       }
     }
     
@@ -253,6 +382,10 @@ export default function Home() {
       if (chartUpdateIntervalRef.current) {
         clearInterval(chartUpdateIntervalRef.current)
         chartUpdateIntervalRef.current = null
+      }
+      // Unsubscribe from WebSocket if connected
+      if (birdeyeWsRef.current?.isConnected() && selectedToken) {
+        birdeyeWsRef.current.unsubscribeFromToken(selectedToken)
       }
     }
   }, [selectedToken, chartTimeframe])
@@ -581,6 +714,16 @@ export default function Home() {
           toast.success('Connected to bot')
           setIsConnected(true)
           reconnectAttempts = 0; // Reset attempts on successful connection
+          
+          // Request initial data from the bot
+          if (websocket && websocket.readyState === WebSocket.OPEN) {
+            websocket.send(JSON.stringify({ type: 'get_positions' }))
+            websocket.send(JSON.stringify({ type: 'get_history' }))
+            websocket.send(JSON.stringify({ type: 'get_trader_activity' }))
+          }
+          
+          // Initialize Birdeye WebSocket after main connection
+          initBirdeyeWebSocket()
         }
 
         websocket.onmessage = (event: MessageEvent) => {
@@ -637,6 +780,11 @@ export default function Home() {
       if (chartUpdateIntervalRef.current) {
         clearInterval(chartUpdateIntervalRef.current)
       }
+      // Cleanup Birdeye WebSocket
+      if (birdeyeWsRef.current) {
+        birdeyeWsRef.current.disconnect()
+        birdeyeWsRef.current = null
+      }
     }
   }, [user?.id]) // Only reconnect when user ID changes, not on every user object change
 
@@ -652,6 +800,30 @@ export default function Home() {
       toast.error('Connection lost. Please refresh.')
     }
   }, [ws])
+
+  // Calculate dynamic P&L for open positions
+  const calculatePnL = (position: Position) => {
+    // For closed positions, use the stored P&L
+    if (position.status === 'closed' && position.pnl !== undefined) {
+      return { pnl: position.pnl, pnlPercent: position.pnlPercent }
+    }
+    
+    // For open/partial positions, calculate dynamically
+    const currentValue = position.tokenAmount * position.currentPrice
+    const entryValue = position.entryAmount
+    
+    // Account for partial exits
+    let partialExitValue = 0
+    if (position.partialExits && position.partialExits.length > 0) {
+      partialExitValue = position.partialExits.reduce((sum, exit) => sum + exit.solReceived, 0)
+    }
+    
+    // P&L = (current value of remaining tokens + SOL received from partial exits) - initial investment
+    const pnl = (currentValue / (botStatus.solPrice || 180)) + partialExitValue - entryValue
+    const pnlPercent = (pnl / entryValue) * 100
+    
+    return { pnl, pnlPercent }
+  }
 
   const formatPrice = (price: number) => {
     if (price > 1) return price.toFixed(2)
@@ -837,12 +1009,18 @@ export default function Home() {
                       </span>
                       <span
                         className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-medium border ${
-                          (positions.get(selectedToken)!.pnlPercent || 0) >= 0
-                            ? 'text-green-300 bg-green-500/10 border-green-500/30'
-                            : 'text-red-300 bg-red-500/10 border-red-500/30'
+                          (() => {
+                            const { pnlPercent } = calculatePnL(positions.get(selectedToken)!)
+                            return pnlPercent >= 0
+                              ? 'text-green-300 bg-green-500/10 border-green-500/30'
+                              : 'text-red-300 bg-red-500/10 border-red-500/30'
+                          })()
                         }`}
                       >
-                        {formatPercent(positions.get(selectedToken)!.pnlPercent)}
+                        {(() => {
+                          const { pnlPercent } = calculatePnL(positions.get(selectedToken)!)
+                          return formatPercent(pnlPercent)
+                        })()}
                       </span>
                       <a
                         href={`https://dexscreener.com/solana/${selectedToken}`}
@@ -859,7 +1037,7 @@ export default function Home() {
                 </div>
 
                 <div className="flex items-center gap-1 flex-wrap">
-                  {['1s', '5s', '15s', '30s', '1m', '5m', '15m', '30m', '1h'].map(tf => (
+                  {['1s', '15s', '30s', '1m', '5m', '15m', '1h'].map(tf => (
                     <Button
                       key={tf}
                       size="sm"
@@ -886,7 +1064,7 @@ export default function Home() {
                     positions.get(selectedToken)!.partialExits!.reduce((sum, exit) => sum + exit.price, 0) / positions.get(selectedToken)!.partialExits!.length : 
                     undefined
                   }
-                  currentPrice={selectedToken && positions.get(selectedToken) ? positions.get(selectedToken)!.currentPrice : undefined}
+                  currentPrice={realtimePrice || (selectedToken && positions.get(selectedToken) ? positions.get(selectedToken)!.currentPrice : undefined)}
                 />
               </div>
             </div>
@@ -1234,14 +1412,21 @@ export default function Home() {
                               })()}
                             </td>
                             <td className="px-3 py-2.5 text-xs text-right">
-                              <div className={`inline-flex items-center px-2 py-0.5 rounded-full font-medium ${
-                                (position.pnl || 0) >= 0 ? 'bg-green-500/10 text-green-400' : 'bg-red-500/10 text-red-400'
-                              }`}>
-                                {(position.pnl || 0) >= 0 ? '+' : ''}{(position.pnl || 0).toFixed(4)}
-                              </div>
-                              <div className="text-[9px] opacity-80 mt-1">
-                                {formatPercent(position.pnlPercent || 0)}
-                              </div>
+                              {(() => {
+                                const { pnl, pnlPercent } = calculatePnL(position)
+                                return (
+                                  <>
+                                    <div className={`inline-flex items-center px-2 py-0.5 rounded-full font-medium ${
+                                      pnl >= 0 ? 'bg-green-500/10 text-green-400' : 'bg-red-500/10 text-red-400'
+                                    }`}>
+                                      {pnl >= 0 ? '+' : ''}{pnl.toFixed(4)}
+                                    </div>
+                                    <div className="text-[9px] opacity-80 mt-1">
+                                      {formatPercent(pnlPercent)}
+                                    </div>
+                                  </>
+                                )
+                              })()}
                             </td>
                             <td className="px-3 py-2.5">
                               <div className="flex gap-1.5 justify-center">
