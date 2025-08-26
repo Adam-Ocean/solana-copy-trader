@@ -396,6 +396,59 @@ export class DatabaseService extends EventEmitter {
     }
   }
 
+  // Trader transaction methods
+  async saveTraderTransaction(transaction: {
+    trader_wallet: string;
+    type: 'BUY' | 'SELL';
+    token_address: string;
+    token_symbol?: string;
+    amount: number;
+    price: number;
+    tx_hash?: string;
+  }): Promise<boolean> {
+    if (!this.initialized) return false;
+
+    try {
+      await this.sql`
+        INSERT INTO trader_transactions (
+          trader_wallet, type, token_address, token_symbol, amount, price, tx_hash
+        ) VALUES (
+          ${transaction.trader_wallet}, ${transaction.type}, ${transaction.token_address},
+          ${transaction.token_symbol}, ${transaction.amount}, ${transaction.price}, ${transaction.tx_hash}
+        )
+      `;
+      return true;
+    } catch (error) {
+      console.error('Error saving trader transaction:', error);
+      return false;
+    }
+  }
+
+  async getTraderTransactions(limit: number = 100): Promise<Array<{
+    id: number;
+    type: 'BUY' | 'SELL';
+    token_address: string;
+    token_symbol?: string;
+    amount: number;
+    price: number;
+    timestamp: Date;
+    trader_wallet: string;
+    tx_hash?: string;
+  }>> {
+    if (!this.initialized) return [];
+
+    try {
+      return await this.sql`
+        SELECT * FROM trader_transactions 
+        ORDER BY timestamp DESC
+        LIMIT ${limit}
+      `;
+    } catch (error) {
+      console.error('Error getting trader transactions:', error);
+      return [];
+    }
+  }
+
   async getRecentTrades(limit: number = 100): Promise<Trade[]> {
     try {
       const trades = await this.sql`

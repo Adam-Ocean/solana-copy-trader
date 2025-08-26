@@ -16,6 +16,8 @@ export class YellowstoneClient extends EventEmitter {
   private reconnectAttempts = 0;
   private maxReconnectAttempts = 10;
   private isConnected = false;
+  private lastPingTime: number = 0;
+  private currentLatency: number = 0;
 
   constructor(config: YellowstoneConfig) {
     super();
@@ -39,10 +41,14 @@ export class YellowstoneClient extends EventEmitter {
       
       const geyserProto = grpc.loadPackageDefinition(packageDefinition) as any;
       
-      // Create client
+      // Create client with appropriate credentials
+      const credentials = this.config.endpoint.includes(':443') 
+        ? grpc.credentials.createSsl()
+        : grpc.credentials.createInsecure();
+        
       this.client = new geyserProto.geyser.Geyser(
         this.config.endpoint,
-        grpc.credentials.createInsecure(),
+        credentials,
         {
           'grpc.max_receive_message_length': 4 * 1024 * 1024, // 4MB (conservative)
           'grpc.keepalive_time_ms': 30000, // 30 seconds (conservative - this worked!)
@@ -80,7 +86,7 @@ export class YellowstoneClient extends EventEmitter {
             owner: []
           }
         },
-        commitment: "confirmed"
+        commitment: "processed"
       };
       
       console.log(`📡 Subscribing to Yellowstone for wallet: ${this.config.targetWallet}`);
@@ -132,7 +138,8 @@ export class YellowstoneClient extends EventEmitter {
         console.error('❌ Yellowstone stream error:', error.message);
         this.isConnected = false;
         this.emit('error', error);
-        // Simplified error handling - less aggressive reconnection
+        // Reconnect on errors to prevent disconnection after signals
+        this.scheduleReconnect();
       });
       
       this.stream.on('end', () => {
@@ -154,15 +161,16 @@ export class YellowstoneClient extends EventEmitter {
       // Send periodic pings to keep connection alive
       const pingInterval = setInterval(() => {
         if (this.isConnected && this.stream) {
+          const pingId = Date.now();
+          this.lastPingTime = pingId;
           const pingRequest = {
-            ping: { id: Date.now() }
+            ping: { id: pingId }
           };
-          console.log('📤 Sending ping to Yellowstone...');
           this.stream.write(pingRequest);
         } else {
           clearInterval(pingInterval);
         }
-      }, 30000); // Send ping every 30 seconds instead of 5
+      }, 5000);
       
       // Note: Connection status is set in metadata handler
       console.log('✅ Yellowstone stream initialized');
@@ -183,7 +191,6 @@ export class YellowstoneClient extends EventEmitter {
       
       // Handle ping from server - respond with pong
       if (updateType === 'ping' && data.ping) {
-        console.log('🏓 Ping received from Yellowstone, sending pong...');
         if (this.stream) {
           this.stream.write({ pong: { id: data.ping.id || 1 } });
         }
@@ -191,8 +198,12 @@ export class YellowstoneClient extends EventEmitter {
       }
       
       // Handle pong responses
-      if (updateType === 'pong') {
-        console.log('🏓 Pong received from Yellowstone');
+      if (updateType === 'pong' && data.pong) {
+        // Calculate real latency from our ping
+        if (this.lastPingTime && data.pong.id === this.lastPingTime) {
+          this.currentLatency = Date.now() - this.lastPingTime;
+          console.log(`🏓 Yellowstone latency: ${this.currentLatency}ms`);
+        }
         return;
       }
       
@@ -206,7 +217,7 @@ export class YellowstoneClient extends EventEmitter {
           timestamp,
           slot,
           data: data.account,
-          latency: '<5ms' // Yellowstone direct connection
+          latency: this.currentLatency > 0 ? `${this.currentLatency}ms` : '<measuring>'
         });
       }
       
@@ -225,7 +236,7 @@ export class YellowstoneClient extends EventEmitter {
           slot,
           signature: signature ? Buffer.from(signature).toString('base64') : undefined,
           data: data.transaction,
-          latency: '<5ms' // Yellowstone direct connection
+          latency: this.currentLatency > 0 ? `${this.currentLatency}ms` : '<measuring>'
         });
       }
       
@@ -282,5 +293,9 @@ export class YellowstoneClient extends EventEmitter {
 
   isReady(): boolean {
     return this.isConnected;
+  }
+
+  getLatency(): string {
+    return this.currentLatency > 0 ? `${this.currentLatency}ms` : '<measuring>';
   }
 }

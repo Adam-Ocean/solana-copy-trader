@@ -10,6 +10,7 @@ import {
   DashboardConfig
 } from '../types/enhanced';
 import { BirdeyeWebSocketService, PriceUpdate, BirdeyeConfig } from './BirdeyeWebSocketService';
+import { DatabaseService } from './DatabaseService';
 
 export class DashboardWebSocketServer extends EventEmitter {
   private wss: WebSocketServer | null = null;
@@ -43,10 +44,15 @@ export class DashboardWebSocketServer extends EventEmitter {
   private marketData: Map<string, MarketData> = new Map();
   private config: DashboardConfig | null = null;
   private broadcastInterval: NodeJS.Timeout | null = null;
+  private database: DatabaseService | null = null;
 
   constructor(port: number, private wsConfig?: BirdeyeConfig) {
     super();
     this.port = port;
+  }
+
+  setDatabase(database: DatabaseService): void {
+    this.database = database;
   }
 
   async start(): Promise<void> {
@@ -295,6 +301,34 @@ export class DashboardWebSocketServer extends EventEmitter {
         type: 'trade_history',
         data: this.tradeHistory,
         timestamp: Date.now()
+      });
+    }
+
+    // Send trader transactions from database
+    if (this.database) {
+      this.database.getTraderTransactions(100).then((transactions: any[]) => {
+        if (transactions.length > 0) {
+          // Convert database format to frontend format
+          const formattedTransactions = transactions.map((tx: any) => ({
+            id: tx.id,
+            type: tx.type,
+            token: tx.token_address,
+            tokenSymbol: tx.token_symbol || 'Unknown',
+            amount: parseFloat(tx.amount.toString()),
+            price: parseFloat(tx.price.toString()),
+            timestamp: tx.timestamp.getTime(),
+            trader: tx.trader_wallet,
+            txHash: tx.tx_hash
+          }));
+
+          this.sendMessage(ws, {
+            type: 'trader_transactions_history',
+            data: formattedTransactions,
+            timestamp: Date.now()
+          });
+        }
+      }).catch((error: any) => {
+        console.error('Failed to load trader transactions:', error);
       });
     }
 
@@ -679,7 +713,8 @@ export class DashboardWebSocketServer extends EventEmitter {
     this.positions.set(position.token, positionWithTimestamp);
 
     // Debug logging to track P&L updates
-    console.log(`📊 Position update: ${position.tokenSymbol} P&L: ${position.pnl?.toFixed(4)} SOL (${position.pnlPercent?.toFixed(2)}%)`);
+    // Disabled: Dashboard handles real-time prices via Birdeye API
+    // console.log(`📊 Position update: ${position.tokenSymbol} P&L: ${position.pnl?.toFixed(4)} SOL (${position.pnlPercent?.toFixed(2)}%)`);
 
     this.broadcast({
       type: 'position_update',
@@ -786,6 +821,21 @@ export class DashboardWebSocketServer extends EventEmitter {
     trader: string;
     txHash?: string;
   }): void {
+    // Save to database
+    if (this.database) {
+      this.database.saveTraderTransaction({
+        trader_wallet: transaction.trader,
+        type: transaction.type,
+        token_address: transaction.token,
+        token_symbol: transaction.tokenSymbol,
+        amount: transaction.amount,
+        price: transaction.price,
+        tx_hash: transaction.txHash
+      }).catch((error: any) => {
+        console.error('Failed to save trader transaction to database:', error);
+      });
+    }
+
     this.broadcast({
       type: 'trader_transaction',
       data: {

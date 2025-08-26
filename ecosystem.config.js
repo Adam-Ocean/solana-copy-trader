@@ -13,7 +13,7 @@ module.exports = {
       DASHBOARD_PORT: '4791',
       WS_SERVER_PORT: '4791',
       LOG_LEVEL: 'info',
-      YELLOWSTONE_GRPC: 'localhost:10015',
+      YELLOWSTONE_GRPC: 'solana-yellowstone-grpc.publicnode.com:443',
       USE_YELLOWSTONE: 'true',
       TARGET_WALLET: 'GVJp1bkQgw3QdXBmvWRBK5SaXcr3kzf45SfrvRDobQQE'
     },

@@ -62,7 +62,7 @@ export class YellowstoneWalletMonitor extends EventEmitter {
     });
     
     this.client.on('connected', () => {
-      console.log('✅ Yellowstone connected - Ultra-low latency mode active (<5ms)');
+      console.log('✅ Yellowstone connected - Ultra-low latency mode active');
       this.emit('connected');
     });
     
@@ -104,8 +104,8 @@ export class YellowstoneWalletMonitor extends EventEmitter {
             action: swapInfo.side,
             wallet: this.targetWallet,
             token: swapInfo.token,
-            amount: swapInfo.amount,
-            solAmount: swapInfo.amount,
+            amount: swapInfo.tokenAmount || swapInfo.amount, // Token count (prioritize tokenAmount if available)
+            solAmount: swapInfo.amount, // SOL amount spent/received
             price: swapInfo.price || 0,
             timestamp: Math.floor(Date.now() / 1000),
             signature: signatureStr
@@ -114,9 +114,11 @@ export class YellowstoneWalletMonitor extends EventEmitter {
           console.log(`🟡 [Yellowstone] ${swapInfo.side.toUpperCase()} Signal:`, {
             dex: swapInfo.dex,
             token: swapInfo.token.substring(0, 10) + '...',
-            amount: `${swapInfo.amount.toFixed(6)} SOL`,
+            tokenAmount: swapInfo.tokenAmount ? swapInfo.tokenAmount.toFixed(2) : 'N/A',
+            solAmount: `${swapInfo.amount.toFixed(6)} SOL`,
+            price: `${(swapInfo.price || 0).toFixed(10)} SOL/token`,
             slot: signal.slot,
-            latency: '<5ms'
+            latency: this.client.getLatency()
           });
           
           this.emit('signal', walletSignal);
@@ -275,26 +277,51 @@ export class YellowstoneWalletMonitor extends EventEmitter {
         }
       }
       
-      // Determine trade direction based on TARGET WALLET's change, amount based on largest change
+      // Determine trade direction based on TARGET WALLET's net change (not largest change)
       let side: 'buy' | 'sell' = 'buy';
-      let amount = Math.abs(maxSolChange);
+      let amount = Math.abs(maxSolChange); // Still use largest change for amount
       
-      // Fixed logic: Small negative = SELL (fees), Large negative = BUY  
-      if (targetWalletChange < -0.01) {
-        // Target wallet large SOL decrease = buying tokens (spent significant SOL)
+      // Use TARGET WALLET change to determine direction
+      // For SELLs: target wallet gains SOL (positive change)
+      // For BUYs: target wallet loses SOL (negative change > fees)
+      
+      if (targetWalletChange < -0.005) {
+        // Target wallet lost significant SOL = BUY (spent SOL to buy tokens)
         side = 'buy';
-        console.log(`   BUY detected: ${amount} SOL (target wallet: ${targetWalletChange.toFixed(6)} SOL)`);
-      } else if (targetWalletChange < 0 && targetWalletChange >= -0.01) {
-        // Target wallet small SOL decrease = selling tokens (just paid fees, got SOL elsewhere)
-        side = 'sell';
-        console.log(`   SELL detected: ${amount} SOL (target wallet fees: ${targetWalletChange.toFixed(6)} SOL)`);
+        console.log(`   BUY detected: ${amount} SOL (target wallet spent: ${Math.abs(targetWalletChange).toFixed(6)} SOL)`);
       } else if (targetWalletChange > 0.0001) {
-        // Target wallet SOL increase = selling token (direct SOL receipt)
+        // Target wallet gained SOL = SELL (sold tokens for SOL) 
+        // Even small positive changes can be SELLs - lowered threshold
         side = 'sell';
-        console.log(`   SELL detected: ${amount} SOL (target wallet: +${targetWalletChange.toFixed(6)} SOL)`);
+        console.log(`   SELL detected: ${amount} SOL (target wallet received: +${targetWalletChange.toFixed(6)} SOL)`);
+      } else if (Math.abs(maxSolChange) > 0.1) {
+        // Large transaction but small target wallet change - check if it's a SELL with fees
+        // Look at token balance changes to determine if this is actually a SELL
+        if (meta.pre_token_balances && meta.post_token_balances) {
+          let hasTokenDecrease = false;
+          for (const postBalance of meta.post_token_balances) {
+            const preBalance = meta.pre_token_balances.find((pre: any) => 
+              pre.account_index === postBalance.account_index
+            );
+            if (preBalance && parseFloat(postBalance.ui_token_amount?.ui_amount || '0') < parseFloat(preBalance.ui_token_amount?.ui_amount || '0')) {
+              hasTokenDecrease = true;
+              break;
+            }
+          }
+          
+          if (hasTokenDecrease) {
+            side = 'sell';
+            console.log(`   SELL detected (via token decrease): ${amount} SOL (target wallet change: ${targetWalletChange.toFixed(6)} SOL after fees)`);
+          } else {
+            console.log(`   Small target wallet change (${targetWalletChange.toFixed(6)} SOL) - likely just fees, skipping`);
+            return null;
+          }
+        } else {
+          console.log(`   Small target wallet change (${targetWalletChange.toFixed(6)} SOL) - likely just fees, skipping`);
+          return null;
+        }
       } else {
-        // No significant SOL change, might be token-to-token swap or fees only
-        console.log(`   No significant SOL change detected: ${maxSolChange}`);
+        console.log(`   Small target wallet change (${targetWalletChange.toFixed(6)} SOL) - likely just fees, skipping`);
         return null;
       }
       
@@ -350,10 +377,68 @@ export class YellowstoneWalletMonitor extends EventEmitter {
         }
       }
       
+      // Calculate accurate price using token balance changes
+      let price = 0;
+      let tokenAmount = 0;
+      
+      // Get actual token amount from token balance changes
+      if (meta.pre_token_balances && meta.post_token_balances) {
+        for (const postBalance of meta.post_token_balances) {
+          const preBalance = meta.pre_token_balances.find((pre: any) => 
+            pre.account_index === postBalance.account_index
+          );
+          
+          if (preBalance && postBalance.mint) {
+            const mintStr = Buffer.isBuffer(postBalance.mint) ? 
+              require('bs58').default ? require('bs58').default.encode(postBalance.mint) : require('bs58').encode(postBalance.mint) : 
+              postBalance.mint.toString();
+            
+            // Skip WSOL - we want the actual token being traded
+            if (mintStr !== 'So11111111111111111111111111111111111111112') {
+              const preAmount = parseFloat(preBalance.ui_token_amount?.ui_amount || '0');
+              const postAmount = parseFloat(postBalance.ui_token_amount?.ui_amount || '0');
+              const tokenChange = Math.abs(postAmount - preAmount);
+              
+              if (tokenChange > 0) {
+                tokenAmount = tokenChange;
+                tokenAddress = mintStr; // Update token address with the one that changed
+                console.log(`   Token amount changed: ${tokenChange} ${mintStr.substring(0, 8)}...`);
+                break;
+              }
+            }
+          }
+        }
+      }
+      
+      // Calculate price: SOL amount / token amount
+      if (tokenAmount > 0 && Math.abs(targetWalletChange) > 0.0001) {
+        if (side === 'buy') {
+          // BUY: price = SOL spent / tokens received
+          price = Math.abs(targetWalletChange) / tokenAmount;
+        } else if (side === 'sell') {
+          // SELL: price = SOL received / tokens sold
+          // For sells, target wallet change might be small due to fees, use maxSolChange as backup
+          const solReceived = targetWalletChange > 0 ? targetWalletChange : Math.abs(maxSolChange);
+          price = solReceived / tokenAmount;
+        }
+        console.log(`   Calculated price: ${price.toFixed(10)} SOL per token (${tokenAmount} tokens)`);
+      } else {
+        // Fallback: use the original amount-based calculation
+        if (side === 'buy' && targetWalletChange < 0) {
+          price = Math.abs(targetWalletChange) / amount;
+        } else if (side === 'sell' && targetWalletChange > 0) {
+          price = targetWalletChange / amount;
+        } else {
+          price = amount > 0 ? Math.abs(maxSolChange) / amount : 0;
+        }
+      }
+
       return {
         side,
         token: tokenAddress,
-        amount,
+        amount: amount, // Use the max SOL change (actual trade volume), not target wallet change
+        tokenAmount, // Separate field for token count
+        price: price > 0 ? price : 0, // SOL per token
         dex: dexName || 'Unknown DEX',
         slot: txData.slot
       };

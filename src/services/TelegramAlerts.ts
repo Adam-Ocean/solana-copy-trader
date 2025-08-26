@@ -6,6 +6,9 @@ export class TelegramAlerts {
   private chatId: string;
   private enabled: boolean;
   private baseUrl: string;
+  private lastMessageTime: number = 0;
+  private messageQueue: Array<{text: string, parseMode: string}> = [];
+  private isProcessingQueue: boolean = false;
 
   constructor() {
     this.botToken = process.env.TELEGRAM_BOT_TOKEN || '';
@@ -24,16 +27,50 @@ export class TelegramAlerts {
   private async sendMessage(text: string, parseMode: string = 'HTML'): Promise<void> {
     if (!this.enabled) return;
 
-    try {
-      await axios.post(`${this.baseUrl}/sendMessage`, {
-        chat_id: this.chatId,
-        text,
-        parse_mode: parseMode,
-        disable_web_page_preview: true
-      });
-    } catch (error) {
-      console.error('Failed to send Telegram alert:', error);
+    // Add to queue instead of sending immediately
+    this.messageQueue.push({ text, parseMode });
+    this.processQueue();
+  }
+
+  private async processQueue(): Promise<void> {
+    if (this.isProcessingQueue || this.messageQueue.length === 0) return;
+    
+    this.isProcessingQueue = true;
+    
+    while (this.messageQueue.length > 0) {
+      const now = Date.now();
+      const timeSinceLastMessage = now - this.lastMessageTime;
+      
+      // Rate limit: max 1 message per 1.5 seconds (Telegram allows ~30/minute)
+      if (timeSinceLastMessage < 1500) {
+        await new Promise(resolve => setTimeout(resolve, 1500 - timeSinceLastMessage));
+      }
+      
+      const message = this.messageQueue.shift();
+      if (!message) break;
+      
+      try {
+        await axios.post(`${this.baseUrl}/sendMessage`, {
+          chat_id: this.chatId,
+          text: message.text,
+          parse_mode: message.parseMode,
+          disable_web_page_preview: true
+        });
+        this.lastMessageTime = Date.now();
+      } catch (error: any) {
+        if (error.response?.status === 429) {
+          // Re-queue the message and wait longer
+          this.messageQueue.unshift(message);
+          const retryAfter = error.response?.data?.parameters?.retry_after || 5;
+          console.log(`Rate limited, waiting ${retryAfter} seconds...`);
+          await new Promise(resolve => setTimeout(resolve, retryAfter * 1000));
+        } else {
+          console.error('Failed to send Telegram alert:', error.message);
+        }
+      }
     }
+    
+    this.isProcessingQueue = false;
   }
 
   async sendBuySignal(signal: WalletSignal, position: Position): Promise<void> {

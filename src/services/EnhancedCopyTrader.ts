@@ -121,6 +121,9 @@ export class EnhancedCopyTrader {
     // Initialize database service
     this.databaseService = new DatabaseService();
     
+    // Connect database to dashboard server
+    this.dashboardServer.setDatabase(this.databaseService);
+    
     // Initialize Telegram alerts
     this.telegramAlerts = new TelegramAlerts();
 
@@ -332,25 +335,36 @@ export class EnhancedCopyTrader {
         const decimalsCandidate = mintData?.parsed?.info?.decimals;
         if (typeof decimalsCandidate === 'number') {
           outDecimals = decimalsCandidate;
+          console.log(`   Got token decimals from RPC: ${outDecimals}`);
         }
-      } catch {}
+      } catch (e) {
+        console.log(`   Failed to get decimals from RPC, will use fallback`);
+      }
     }
     const parsedOut = Number(outAmountRaw);
     let ourTokenAmount = 0;
+    
+    // Debug logging
+    console.log(`   Quote raw amount: ${outAmountRaw}, decimals: ${outDecimals}`);
+    
     if (outAmountRaw.includes('.')) {
       // Already a UI amount
       ourTokenAmount = isFinite(parsedOut) ? parsedOut : 0;
+      console.log(`   Parsed as UI amount: ${ourTokenAmount}`);
     } else if (isFinite(parsedOut)) {
-      if (outDecimals !== undefined && parsedOut > 1e6) {
-        // Likely atomic units
-        ourTokenAmount = parsedOut / Math.pow(10, outDecimals);
-      } else if (outDecimals !== undefined && outDecimals >= 6 && parsedOut < 1e6) {
-        // Small integer with high decimals usually indicates UI amount from some providers
-        ourTokenAmount = parsedOut;
-      } else {
-        // Fallback
-        ourTokenAmount = parsedOut;
+      // Jupiter ALWAYS returns atomic units for tokens
+      // We need to divide by 10^decimals to get the actual token amount
+      
+      if (outDecimals === undefined) {
+        // If decimals not provided, fetch from token mint or default to 6
+        // Most pump.fun tokens have 6 decimals
+        outDecimals = 6;
+        console.log(`   No decimals provided, defaulting to 6 for pump.fun token`);
       }
+      
+      // Always treat as atomic units when from Jupiter
+      ourTokenAmount = parsedOut / Math.pow(10, outDecimals);
+      console.log(`   Parsed as atomic units: ${parsedOut} / 10^${outDecimals} = ${ourTokenAmount.toLocaleString()} tokens`);
     }
     
     // Calculate slippage estimate
@@ -370,11 +384,16 @@ export class EnhancedCopyTrader {
       displaySlippage += 1.0; // Add 1% for low liquidity
     }
     
+    // Calculate our actual entry price
+    const ourEntryPriceSOL = ourTokenAmount > 0 ? this.config.positionSize / ourTokenAmount : 0;
+    const ourEntryPriceUSD = ourEntryPriceSOL * this.positionManager.getSolPrice();
+    
     console.log(`   Our investment: ${this.config.positionSize} SOL ($${solValueUSD.toFixed(2)})`);
-    console.log(`   Trader's price: $${signal.price.toFixed(8)}`);
+    console.log(`   Tokens we'll get: ${ourTokenAmount.toLocaleString()} tokens`);
+    console.log(`   Our entry price: ${ourEntryPriceSOL.toFixed(10)} SOL/token ($${ourEntryPriceUSD.toFixed(8)}/token)`);
+    console.log(`   Trader's price: ${signal.price.toFixed(10)} SOL/token`);
     console.log(`   Expected slippage: ${displaySlippage.toFixed(2)}%`);
-    console.log(`   Tokens we'll get: ${ourTokenAmount.toFixed(2)}`);
-    console.log(`   Price Impact: ${quote.priceImpactPct}%`);
+    console.log(`   Price Impact: ${quote.priceImpactPct || '0'}%`);
 
     // Execute trade
     const execution: TradeExecution = {
@@ -396,13 +415,13 @@ export class EnhancedCopyTrader {
 
     if (result.success) {
       // Create our own signal with OUR token amount, not the trader's
-      // Use the calculated amount based on our investment
-      const ourEntryPriceUSD = ourTokenAmount > 0 ? solValueUSD / ourTokenAmount : signal.price;
+      // Calculate our actual price in SOL per token (not USD)
+      const ourEntryPriceSOL = ourTokenAmount > 0 ? this.config.positionSize / ourTokenAmount : signal.price;
       const ourSignal = {
         ...signal,
         amount: ourTokenAmount, // Our calculated token amount
         solAmount: this.config.positionSize,
-        price: ourEntryPriceUSD
+        price: ourEntryPriceSOL // Price in SOL per token (will be converted to USD in PositionManager)
       };
       
       // Record position with our actual amounts
@@ -427,7 +446,7 @@ export class EnhancedCopyTrader {
         token_address: signal.token,
         token_symbol: signal.tokenSymbol,
         action: 'BUY',
-        entry_price: ourEntryPriceUSD,
+        entry_price: position.entryPrice, // Use the actual USD price from position
         amount_sol: this.config.positionSize,
         token_amount: position.tokenAmount,
         status: 'OPEN',
@@ -439,8 +458,8 @@ export class EnhancedCopyTrader {
         wallet_address: process.env.TARGET_WALLET || '',
         token_address: signal.token,
         token_symbol: signal.tokenSymbol,
-        entry_price: ourEntryPriceUSD,
-        current_price: ourEntryPriceUSD,
+        entry_price: position.entryPrice, // Use actual USD price from position
+        current_price: position.entryPrice, // Initial current price equals entry
         amount_sol: this.config.positionSize,
         remaining_sol: this.config.positionSize,
         token_amount: position.tokenAmount,
@@ -834,37 +853,28 @@ export class EnhancedCopyTrader {
   }
 
   private startPriceUpdateLoop(): void {
-    // Dynamic update interval to respect Birdeye 15 RPS limit
-    const updatePrices = async () => {
+    // DISABLED: Dashboard now handles real-time price updates via Birdeye API
+    // Bot only tracks positions for entry/exit logic, not real-time prices
+    console.log('📊 Price updates disabled - Dashboard handles real-time prices');
+    
+    // Only update prices occasionally for exit decision making (every 30 seconds)
+    const checkExitConditions = async () => {
       const numPositions = this.positionManager.getOpenPositions().length;
       
-      // Calculate safe interval based on number of positions
-      let interval = 1000; // Default 1 second
-      if (numPositions === 0) {
-        interval = 5000; // No positions, check less frequently
-      } else if (numPositions <= 2) {
-        interval = 500; // 2 RPS per position = 4 RPS total
-      } else if (numPositions <= 3) {
-        interval = 750; // 1.33 RPS per position = 4 RPS total
-      } else if (numPositions <= 5) {
-        interval = 1000; // 1 RPS per position = 5 RPS total
-      } else if (numPositions <= 10) {
-        interval = 2000; // 0.5 RPS per position = 5 RPS total
-      } else {
-        interval = 3000; // 0.33 RPS per position for 10+ positions
+      if (numPositions > 0) {
+        // Update prices for exit decision logic only
+        await this.positionManager.updateAllPositionPrices();
       }
       
-      await this.positionManager.updateAllPositionPrices();
-      
-      // Clear old interval and set new one with adjusted timing
+      // Check again in 30 seconds
       if (this.priceUpdateInterval) {
         clearTimeout(this.priceUpdateInterval);
       }
-      this.priceUpdateInterval = setTimeout(updatePrices, interval);
+      this.priceUpdateInterval = setTimeout(checkExitConditions, 30000); // 30 seconds
     };
     
-    // Start the update loop
-    updatePrices();
+    // Start checking every 30 seconds
+    checkExitConditions();
   }
 
   private async shutdown(): Promise<void> {

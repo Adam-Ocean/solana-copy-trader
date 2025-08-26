@@ -360,7 +360,8 @@ export class EnhancedPositionManager extends EventEmitter {
     // Update SOL price first
     await this.updateSolPrice();
     
-    // Silent update - removed verbose logging
+    // Silent update - no logging or events for price updates
+    // Dashboard handles real-time price display
     
     // Ensure we have valid token amount
     if (!position.tokenAmount || position.tokenAmount <= 0) {
@@ -419,7 +420,8 @@ export class EnhancedPositionManager extends EventEmitter {
     const shouldThrottle = timeSinceLastLog > 30000; // 30 seconds throttle
     
     if (shouldLog && shouldThrottle) {
-      console.log(`📊 Position update: ${position.tokenSymbol} P&L: ${position.pnl.toFixed(4)} SOL (${position.pnlPercent.toFixed(2)}%)`);
+      // Disabled: Dashboard handles real-time prices
+      // console.log(`📊 Position update: ${position.tokenSymbol} P&L: ${position.pnl.toFixed(4)} SOL (${position.pnlPercent.toFixed(2)}%)`);
       this.lastPositionLogTime.set(position.id, Date.now());
     }
     
@@ -436,9 +438,9 @@ export class EnhancedPositionManager extends EventEmitter {
     }
 
     // No automatic exits; copy-only strategy
-
-    // Emit update for every price change to keep dashboard in sync
-    this.emit('position_update', position);
+    
+    // Don't emit position_update for price changes
+    // Dashboard handles real-time updates via Birdeye API
   }
 
   public async updateAllPositionPrices(): Promise<void> {
