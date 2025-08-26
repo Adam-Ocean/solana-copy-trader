@@ -1,0 +1,49 @@
+{
+  "name": "copy-trader",
+  "version": "1.0.0",
+  "description": "Solana wallet copy trading bot with 0.3 SOL positions",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx src/EnhancedCopyTrader.ts",
+    "start": "node dist/EnhancedCopyTrader.js",
+    "paper": "PAPER_TRADING=true tsx src/EnhancedCopyTrader.ts",
+    "dashboard:next": "cd dashboard-v2 && npm run dev",
+    "dashboard:build": "cd dashboard-v2 && npm run build",
+    "all": "npx concurrently \"npm run paper\" \"npm run dashboard:next\"",
+    "test": "vitest",
+    "test:watch": "vitest --watch",
+    "test:coverage": "vitest --coverage",
+    "test:birdeye-vs-quicknode": "node tests/websocket/birdeye-vs-quicknode-comparison.js",
+    "test:wallet-monitor-comparison": "AWS_INSTANCE=107.22.92.147 node tests/websocket/birdeye-vs-quicknode-comparison.js"
+  },
+  "dependencies": {
+    "@coral-xyz/anchor": "^0.30.1",
+    "@grpc/grpc-js": "^1.13.4",
+    "@grpc/proto-loader": "^0.8.0",
+    "@neondatabase/serverless": "^1.0.1",
+    "@solana-tracker/data-api": "^0.0.12",
+    "@solana/web3.js": "^1.95.3",
+    "axios": "^1.7.7",
+    "bs58": "^6.0.0",
+    "dayjs": "^1.11.13",
+    "dotenv": "^16.4.5",
+    "eventemitter3": "^5.0.1",
+    "eventsource": "^2.0.2",
+    "node-fetch": "^3.3.2",
+    "uuid": "^9.0.1",
+    "websocket": "^1.0.35",
+    "ws": "^8.18.3"
+  },
+  "devDependencies": {
+    "@types/eventsource": "^1.1.15",
+    "@types/node": "^22.5.5",
+    "@types/uuid": "^9.0.8",
+    "@types/websocket": "^1.0.10",
+    "@types/ws": "^8.5.12",
+    "@vitest/coverage-v8": "^1.3.1",
+    "tsx": "^4.19.1",
+    "typescript": "^5.6.2",
+    "vitest": "^1.3.1"
+  }
+}

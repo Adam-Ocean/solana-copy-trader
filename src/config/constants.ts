@@ -1,0 +1,42 @@
+// Known DEX Program IDs
+export const DEX_PROGRAMS = {
+  JUPITER_V6: 'JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4',
+  RAYDIUM_V4: '675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8',
+  RAYDIUM_CLMM: 'CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK',
+  RAYDIUM_CPMM: 'CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C',
+  RAYDIUM_LAUNCHPAD: 'LanMV9sAd7wArD4vJFi2qDdfnVhFxYSUg6eADduJ3uj',
+  ORCA_WHIRLPOOL: 'whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc',
+  PUMP_FUN: '6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P',
+  PUMP_AMM: '39azUYFWPz3VHgKCf3VChUwbpURdCHRxjWVowf5jUJjg', // New Pump AMM
+  PHOENIX: 'PhoeNiXZ8ByJGLkxNfZRnkUfjvmuYqLR89jjFHGqdXY',
+  METEORA: 'LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo',
+  METEORA_DBC: 'dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN',
+  METEORA_DLMM_V2: 'HLnpSz9h2S4hiLQ43rnSD9XkcUThA7B8hQMKmDaiTLcC',
+  METEORA_POOLS: 'Eo7WjKq67rjJQSZxS6z3YkapzY3eMj6Xy8X5EQVn5UaB',
+  AXIOM: 'AxiomfHaWDemCFBLBayqnEnNwE6b7B2Qz3UmzMpgbMG6',
+  AXIOM_V2: 'AxiomxSitiyXyPjKgJ9XSrdhsydtZsskZTEDam3PxKcC', // Axiom Trading Program 2
+  PAMM_AMM: 'pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA',
+  PUMP_FUN_PROGRAM: 'H78HrdQ2E7N5eHrE4FEnPNxxdNofyYcrZFzkVdoyGWg9', // H78 program
+  PUMP_FUN_PROGRAM_9F: '9Fox6i7oT8p4qHn76Qj3dks8RRMGsXQyfMSBScA5yVyX', // 9F program
+  PUMP_FUN_AMM_PROTOCAL_FEE_6: 'AVmoTthdrX6tKt4nDjco2D775W2YK3sDhxPcMmzUAmTY',
+  Raydium_Launchpad_Authority: 'WLHv2UAZm6z4KyaaELi5pjdbJh6RESMva1Rnn8pJVVh',
+  System_Program:'11111111111111111111111111111111',
+  DFLOW_AGGREGATOR_V4: 'DF1ow4tspfHX9JwWJsAb9epbkA8hmpSEAtxXy1V27QBH',
+  MEV_PROGRAM: 'MEViEnscUm6tsQRoGd9h6nLQaQspKj7DB2M5FwM3Xvz', // MEV protection program
+  // Legacy/additional DEXes
+  JUPITER_V4: 'JUP4Fb2cqiRUcaTHdrPC8h2gNsA2ETXiPDD33WcGuJB',
+  RAYDIUM_CLMM_OLD: 'RVKd61ztZW9GUwhRbbLoYVRE5Xf1B2tVscKqwZqXgEr',
+  RAYDIUM_CLMM_POOL_OLD: 'cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG',
+  PUMP_FUN_OLD: '6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBymdzzkV'
+};
+
+// Programs to ignore/block - these are not direct token swaps
+export const BLOCKED_PROGRAMS = {
+  PHOTON_PROGRAM: 'BSfD6SHZigAfDWSjzD5Q41jw8LmKwtmjskPH9XW1mrRW', // Multi-hop router
+};
+
+// Wrapped SOL mint address
+export const WSOL_MINT = 'So11111111111111111111111111111111111111112';
+
+// Native SOL placeholder
+export const NATIVE_SOL = '11111111111111111111111111111111';

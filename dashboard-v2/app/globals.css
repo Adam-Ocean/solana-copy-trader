@@ -1,0 +1,320 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 220 15% 7%;
+    --foreground: 0 0% 95%;
+    --card: 220 14% 10%;
+    --card-foreground: 0 0% 95%;
+    --popover: 220 14% 10%;
+    --popover-foreground: 0 0% 95%;
+    --primary: 150 85% 50%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 220 14% 15%;
+    --secondary-foreground: 0 0% 95%;
+    --muted: 220 14% 18%;
+    --muted-foreground: 220 9% 55%;
+    --accent: 200 90% 56%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 220 14% 18%;
+    --input: 220 14% 15%;
+    --ring: 142 70% 45%;
+    --radius: 0.25rem;
+
+    /* Neon helpers */
+    --neon-green: 150 95% 55%; /* #20e3b2-ish */
+    --neon-blue: 200 90% 60%;  /* #3bc6ff-ish */
+    --neon-purple: 270 95% 70%; /* #b388ff-ish */
+    --surface: 220 18% 7%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply text-foreground antialiased;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', sans-serif;
+  }
+}
+
+/* Subtle neon glows (very soft) */
+.glow-green-soft {
+  box-shadow: 0 0 0 1px hsla(var(--neon-green) / 0.18), 0 0 12px hsla(var(--neon-green) / 0.08);
+}
+.glow-blue-soft {
+  box-shadow: 0 0 0 1px hsla(var(--neon-blue) / 0.16), 0 0 12px hsla(var(--neon-blue) / 0.06);
+}
+.glow-red-soft {
+  box-shadow: 0 0 0 1px rgba(239, 68, 68, 0.18), 0 0 12px rgba(239, 68, 68, 0.08);
+}
+
+/* Glassy surface with restrained blur */
+.glass-soft {
+  background: rgba(18, 20, 26, 0.75);
+  border: 1px solid rgba(148, 163, 184, 0.10);
+  backdrop-filter: saturate(120%) blur(6px);
+}
+
+.glass-strong {
+  background: rgba(15, 17, 23, 0.65);
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  backdrop-filter: saturate(140%) blur(10px);
+  box-shadow: 0 8px 24px rgba(0,0,0,0.35);
+}
+
+/* Dramatic animated app background */
+.bg-app {
+  background-color: #0a0b0d;
+  background-image:
+    radial-gradient(1200px 600px at -10% -10%, rgba(32, 227, 178, 0.08), transparent 60%),
+    radial-gradient(1000px 500px at 110% 0%, rgba(59, 198, 255, 0.08), transparent 60%),
+    radial-gradient(900px 600px at 50% 120%, rgba(179, 136, 255, 0.06), transparent 60%),
+    linear-gradient(180deg, rgba(17, 20, 28, 0.95), rgba(10, 11, 13, 0.98));
+  background-repeat: no-repeat;
+  background-size: cover, cover, cover, cover;
+  animation: bg-shift 30s ease-in-out infinite alternate;
+}
+
+@keyframes bg-shift {
+  0% { background-position: 0% 0%, 100% 0%, 50% 100%, 0 0; }
+  100% { background-position: 10% 5%, 90% 10%, 48% 95%, 0 0; }
+}
+
+/* Stat card */
+.stat-card {
+  background: linear-gradient(180deg, rgba(32, 227, 178, 0.08), rgba(32, 227, 178, 0.0));
+  border: 1px solid rgba(32, 227, 178, 0.25);
+  box-shadow: 0 0 0 1px rgba(32, 227, 178, 0.08) inset, 0 6px 24px rgba(32, 227, 178, 0.06);
+}
+
+.stat-card.red {
+  background: linear-gradient(180deg, rgba(244, 63, 94, 0.08), rgba(244, 63, 94, 0.0));
+  border: 1px solid rgba(244, 63, 94, 0.25);
+  box-shadow: 0 0 0 1px rgba(244, 63, 94, 0.08) inset, 0 6px 24px rgba(244, 63, 94, 0.06);
+}
+
+/* Tiny PnL bar */
+.pnl-bar {
+  height: 2px;
+  border-radius: 1px;
+}
+.pnl-bar.positive { background: linear-gradient(90deg, rgba(16,185,129,0.0), rgba(16,185,129,0.8)); }
+.pnl-bar.negative { background: linear-gradient(90deg, rgba(239,68,68,0.0), rgba(239,68,68,0.8)); }
+
+/* Sidebar */
+.sidebar {
+  background: rgba(10,11,13,0.6);
+  border-right: 1px solid rgba(148,163,184,0.12);
+  backdrop-filter: blur(10px) saturate(140%);
+}
+
+/* Animated thin neon line (use on containers with relative) */
+.neon-bottom-line { position: relative; }
+.neon-bottom-line::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 1px;
+  background: linear-gradient(90deg, transparent 0%, hsla(var(--neon-blue) / 0.0) 10%, hsla(var(--neon-blue) / 0.5) 50%, hsla(var(--neon-blue) / 0.0) 90%, transparent 100%);
+  background-size: 200% 100%;
+  animation: neon-pan 8s linear infinite;
+  opacity: 0.6;
+}
+
+.neon-resize-handle {
+  position: relative;
+}
+.neon-resize-handle::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -1px;
+  height: 1px;
+  background: linear-gradient(90deg, transparent 0%, hsla(var(--neon-green) / 0.0) 10%, hsla(var(--neon-green) / 0.45) 50%, hsla(var(--neon-green) / 0.0) 90%, transparent 100%);
+  background-size: 200% 100%;
+  animation: neon-pan 7s linear infinite reverse;
+  opacity: 0.5;
+}
+
+@keyframes neon-pan {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* Direct neon line utility for explicit elements */
+.neon-line {
+  height: 1px;
+  background: linear-gradient(90deg, transparent 0%, hsla(var(--neon-blue) / 0.0) 10%, hsla(var(--neon-blue) / 0.55) 50%, hsla(var(--neon-blue) / 0.0) 90%, transparent 100%);
+  background-size: 200% 100%;
+  animation: neon-pan 8s linear infinite;
+  opacity: 0.65;
+}
+
+/* Row selection glow (very faint) */
+.row-selected {
+  box-shadow: inset 0 0 0 1px hsla(var(--neon-blue) / 0.25), 0 0 0 1px hsla(var(--neon-blue) / 0.0);
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 2px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+/* Button variants */
+.btn-buy {
+  @apply bg-green-500/20 hover:bg-green-500/30 text-green-400 border border-green-500/30;
+}
+
+.btn-sell {
+  @apply bg-red-500/20 hover:bg-red-500/30 text-red-400 border border-red-500/30;
+}
+
+/* Text colors */
+.text-buy {
+  @apply text-green-400;
+}
+
+.text-sell {
+  @apply text-red-400;
+}
+
+/* Panel styles */
+.panel {
+  @apply bg-[#12141a] border border-gray-800/50 rounded-sm;
+}
+
+.panel-header {
+  @apply px-3 py-2 border-b border-gray-800/50 flex items-center justify-between;
+}
+
+/* Table styles */
+/* Professional dense table */
+.data-table { width: 100%; font-size: 11px; }
+.data-table th { color: #748094; font-weight: 500; text-align: left; padding: 6px 8px; text-transform: uppercase; letter-spacing: 0.08em; }
+.data-table td { padding: 6px 8px; color: #d1d5db; }
+.data-table tr { border-bottom: 1px solid rgba(148,163,184,0.12); transition: background-color 120ms ease; }
+.data-table tr:hover { background-color: rgba(255,255,255,0.03); }
+.data-table tbody tr:last-child { border-bottom: 0; }
+
+/* Input styles */
+.input-dark {
+  @apply bg-[#1a1c24] border border-gray-800/50 rounded-sm px-3 py-1.5 text-sm focus:outline-none focus:border-gray-700 transition-colors;
+}
+
+/* Tab styles */
+.tab-inactive {
+  @apply text-gray-500 hover:text-gray-400 transition-colors text-xs uppercase tracking-wider;
+}
+
+.tab-active {
+  @apply text-white border-b-2 border-green-400 text-xs uppercase tracking-wider;
+}
+
+/* Price animations */
+@keyframes flash-green {
+  0% { background-color: rgba(34, 197, 94, 0.3); }
+  100% { background-color: transparent; }
+}
+
+@keyframes flash-red {
+  0% { background-color: rgba(239, 68, 68, 0.3); }
+  100% { background-color: transparent; }
+}
+
+.flash-green {
+  animation: flash-green 0.5s ease-out;
+}
+
+.flash-red {
+  animation: flash-red 0.5s ease-out;
+}
+
+/* Percentage pill */
+.percentage-pill {
+  @apply inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium;
+}
+
+.percentage-pill.positive {
+  @apply bg-green-500/20 text-green-400;
+}
+
+.percentage-pill.negative {
+  @apply bg-red-500/20 text-red-400;
+}
+
+/* Loading states */
+.skeleton {
+  @apply bg-gray-800/50 animate-pulse rounded;
+}
+
+/* Focus states */
+button:focus-visible {
+  @apply outline-none ring-1 ring-gray-700 ring-offset-1 ring-offset-transparent;
+}
+
+input:focus-visible {
+  @apply outline-none ring-1 ring-gray-700;
+}
+
+/* Flash animation for trader transactions */
+@keyframes txFlashGreen {
+  0% { 
+    background-color: rgba(34, 197, 94, 0);
+    box-shadow: none;
+  }
+  50% { 
+    background-color: rgba(34, 197, 94, 0.3);
+    box-shadow: 0 0 20px rgba(34, 197, 94, 0.4);
+  }
+  100% { 
+    background-color: rgba(34, 197, 94, 0);
+    box-shadow: none;
+  }
+}
+
+@keyframes txFlashRed {
+  0% { 
+    background-color: rgba(239, 68, 68, 0);
+    box-shadow: none;
+  }
+  50% { 
+    background-color: rgba(239, 68, 68, 0.3);
+    box-shadow: 0 0 20px rgba(239, 68, 68, 0.4);
+  }
+  100% { 
+    background-color: rgba(239, 68, 68, 0);
+    box-shadow: none;
+  }
+}
+
+.tx-flash-buy {
+  animation: txFlashGreen 1s ease-in-out;
+}
+
+.tx-flash-sell {
+  animation: txFlashRed 1s ease-in-out;
+}
+

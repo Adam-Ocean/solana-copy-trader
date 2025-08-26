@@ -1,0 +1,59 @@
+version: '3.8'
+
+services:
+  copy-trader:
+    build:
+      context: ../..
+      dockerfile: deploy/aws/Dockerfile
+    ports:
+      - "4789:4789"  # WebSocket/API
+      - "3000:3000"  # Dashboard
+    environment:
+      # RPC Configuration
+      - RPC_ENDPOINT=${RPC_ENDPOINT}
+      - BACKUP_RPC=${BACKUP_RPC}
+      
+      # API Keys
+      - SOLANATRACKER_API_KEY=${SOLANATRACKER_API_KEY}
+      - METIS_API_KEY=${METIS_API_KEY}
+      - NEXTBLOCK_API_KEY=${NEXTBLOCK_API_KEY}
+      
+      # Trading Configuration
+      - TARGET_WALLET=${TARGET_WALLET}
+      - PRIVATE_KEY=${PRIVATE_KEY}
+      - POSITION_SIZE=${POSITION_SIZE:-0.5}
+      - MAX_POSITIONS=${MAX_POSITIONS:-5}
+      - SLIPPAGE_BPS=${SLIPPAGE_BPS:-200}
+      
+      # Mode
+      - PAPER_TRADING=${PAPER_TRADING:-true}
+      - NODE_ENV=production
+      
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4789/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    
+  # Optional: PostgreSQL for trade history
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      - POSTGRES_DB=copytrader
+      - POSTGRES_USER=trader
+      - POSTGRES_PASSWORD=${DB_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
